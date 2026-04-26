@@ -14,5 +14,7 @@ Latest compiled build for Half-Life 1 can be found at https://github.com/sultim-
 	- [SDL2 2.0.14](http://libsdl.org/release/SDL2-devel-2.0.14-VC.zip) (should be put into the `SDL2_VC` folder)
 	- [Half-Life 1 SDK for Xash](https://github.com/sultim-t/hlsdk-xash3d/releases)
 	- for more info, look Github Actions scripts ([c-cpp.yml](https://github.com/sultim-t/xash-rt/blob/ref_rt/.github/workflows/c-cpp.yml), [deps_win32.sh](https://github.com/sultim-t/xash-rt/blob/ref_rt/scripts/gha/deps_win32.sh))
-1) Open Visual Studio solution `xash3d-fwgs.sln`
+1) For a verified command-line build path, see [Documentation/windows-build-verified.md](Documentation/windows-build-verified.md)
+1) Important: the currently verified MSBuild path uses `/m:1` instead of the default parallel project build
+1) Open Visual Studio solution `xash3d-fwgs.sln` or use the documented MSBuild command
 1) Build solution

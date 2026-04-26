@@ -332,3 +332,10 @@ __pycache__
 enc_temp_folder/
 
 .clang-format
+
+# Local dependency checkouts / SDK drops used for Windows builds
+/RTGL1/
+/SDL2_VC/
+
+# Local build scratch logs
+/msbuild*.log

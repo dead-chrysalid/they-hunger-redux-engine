@@ -306,9 +306,14 @@ typedef struct cl_enginefuncs_s
 
 	// added in 2019 update, not documented yet
 	int		(*pfnFilteredClientCmd)( const char *cmd );
+
+	// added in xash-rt HUD migration work
+	// stateless alpha-respecting sprite draw for standalone HUD images and migrated HUD widgets
+	// width/height <= 0 means "use sprite's native size"
+	void		(*pfnSPR_DrawTrans)( HSPRITE hPic, int frame, int x, int y, int width, int height, const wrect_t *prc, int r, int g, int b, int a );
 } cl_enginefunc_t;
 
-#define CLDLL_INTERFACE_VERSION	7
+#define CLDLL_INTERFACE_VERSION	9
 
 #ifdef __cplusplus
 }

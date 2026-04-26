@@ -1,21 +1,28 @@
 [submodule "mainui"]
 	path = 3rdparty/mainui
 	url = https://github.com/sultim-t/xash-rt-menu
+	ignore = untracked
 [submodule "ref_gl/nanogl"]
 	path = 3rdparty/nanogl
 	url = https://github.com/FWGS/nanogl
+	ignore = untracked
 [submodule "ref_gl/gl-wes-v2"]
 	path = 3rdparty/gl-wes-v2
 	url = https://github.com/FWGS/gl-wes-v2
+	ignore = untracked
 [submodule "ref_gl/gl4es"]
 	path = 3rdparty/gl4es/gl4es
 	url = https://github.com/ptitSeb/gl4es
+	ignore = untracked
 [submodule "vgui_support"]
 	path = 3rdparty/vgui_support
 	url = https://github.com/FWGS/vgui_support
+	ignore = untracked
 [submodule "opus"]
 	path = 3rdparty/opus/opus
 	url = https://github.com/xiph/opus
+	ignore = untracked
 [submodule "3rdparty/xash-extras"]
 	path = 3rdparty/extras/xash-extras
 	url = https://github.com/FWGS/xash-extras
+	ignore = untracked

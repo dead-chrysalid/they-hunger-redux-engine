@@ -95,6 +95,7 @@ static dllfunc_t cdll_new_exports[] = 	// allowed only in SDK 2.3 and higher
 };
 
 static void pfnSPR_DrawHoles( int frame, int x, int y, const wrect_t *prc );
+static void pfnSPR_DrawTrans( HSPRITE hPic, int frame, int x, int y, int width, int height, const wrect_t *prc, int r, int g, int b, int a );
 
 /*
 ====================
@@ -1149,6 +1150,81 @@ CL_LoadHudSprite
 upload sprite frames
 =============
 */
+static qboolean CL_IsGenericSpriteImage( const char *name )
+{
+	const char *ext;
+
+	if( !COM_CheckString( name ))
+		return false;
+
+	ext = COM_FileExtension( name );
+
+	return !Q_stricmp( ext, "bmp" ) ||
+		!Q_stricmp( ext, "tga" ) ||
+		!Q_stricmp( ext, "png" ) ||
+		!Q_stricmp( ext, "dds" ) ||
+		!Q_stricmp( ext, "lmp" );
+}
+
+static qboolean CL_LoadHudImageSprite( const char *szSpriteName, const byte *buf, fs_offset_t size, model_t *m_pSprite, uint type, uint texFlags )
+{
+	msprite_t *psprite;
+	mspriteframe_t *pspriteframe;
+	uint imageFlags = texFlags;
+	int texnum, width, height;
+	string texname;
+
+	SetBits( imageFlags, TF_IMAGE );
+
+	if( type == SPR_CLIENT || type == SPR_HUDSPRITE )
+		Q_snprintf( texname, sizeof( texname ), "#HUD/%s", szSpriteName );
+	else Q_snprintf( texname, sizeof( texname ), "#SPR/%s", szSpriteName );
+
+	COM_FixSlashes( texname );
+
+	texnum = ref.dllFuncs.GL_LoadTexture( texname, buf, size, imageFlags );
+	if( !texnum )
+		return false;
+
+	R_GetTextureParms( &width, &height, texnum );
+	if( width <= 0 || height <= 0 )
+	{
+		ref.dllFuncs.GL_FreeTexture( texnum );
+		return false;
+	}
+
+	m_pSprite->type = mod_sprite;
+	m_pSprite->mempool = Mem_AllocPool( va( "^2%s^7", m_pSprite->name ));
+
+	psprite = Mem_Calloc( m_pSprite->mempool, sizeof( msprite_t ));
+	pspriteframe = Mem_Calloc( m_pSprite->mempool, sizeof( mspriteframe_t ));
+
+	m_pSprite->cache.data = psprite;
+	m_pSprite->numframes = psprite->numframes = 1;
+	psprite->type = SPR_FWD_PARALLEL;
+	psprite->facecull = SPR_CULL_FRONT;
+	psprite->synctype = ST_SYNC;
+	psprite->texFormat = SPR_ALPHTEST;
+	psprite->radius = (int)sqrt((double)(( width >> 1 ) * ( width >> 1 )) + (double)(( height >> 1 ) * ( height >> 1 )));
+	psprite->frames[0].type = SPR_SINGLE;
+	psprite->frames[0].frameptr = pspriteframe;
+
+	m_pSprite->mins[0] = m_pSprite->mins[1] = -width * 0.5f;
+	m_pSprite->maxs[0] = m_pSprite->maxs[1] = width * 0.5f;
+	m_pSprite->mins[2] = -height * 0.5f;
+	m_pSprite->maxs[2] = height * 0.5f;
+
+	pspriteframe->width = width;
+	pspriteframe->height = height;
+	pspriteframe->up = height * 0.5f;
+	pspriteframe->left = -width * 0.5f;
+	pspriteframe->down = pspriteframe->up - height;
+	pspriteframe->right = pspriteframe->left + width;
+	pspriteframe->gl_texturenum = texnum;
+
+	return true;
+}
+
 static qboolean CL_LoadHudSprite( const char *szSpriteName, model_t *m_pSprite, uint type, uint texFlags )
 {
 	byte	*buf;
@@ -1185,7 +1261,11 @@ static qboolean CL_LoadHudSprite( const char *szSpriteName, model_t *m_pSprite, 
 	if( buf == NULL )
 		return false;
 
-	if( type == SPR_MAPSPRITE )
+	if( type != SPR_MAPSPRITE && CL_IsGenericSpriteImage( szSpriteName ))
+	{
+		loaded = CL_LoadHudImageSprite( szSpriteName, buf, size, m_pSprite, type, texFlags );
+	}
+	else if( type == SPR_MAPSPRITE )
 		ref.dllFuncs.Mod_LoadMapSprite( m_pSprite, buf, size, &loaded );
 	else
 	{
@@ -1466,6 +1546,32 @@ static void GAME_EXPORT pfnSPR_DrawAdditive( int frame, int x, int y, const wrec
 #else
 	pglDisable( GL_BLEND );
 #endif
+}
+
+/*
+=========
+pfnSPR_DrawTrans
+
+Single alpha-respecting HUD sprite draw for migrated image-based HUD assets.
+Unlike the legacy SPR_Set + SPR_Draw path, this always uses an alpha-aware
+render mode and takes RGBA in one call.
+=========
+*/
+static void GAME_EXPORT pfnSPR_DrawTrans( HSPRITE hPic, int frame, int x, int y, int width, int height, const wrect_t *prc, int r, int g, int b, int a )
+{
+	clgame.ds.pSprite = CL_GetSpritePointer( hPic );
+
+	if( !clgame.ds.pSprite )
+		return;
+
+	clgame.ds.spriteColor[0] = bound( 0, r, 255 );
+	clgame.ds.spriteColor[1] = bound( 0, g, 255 );
+	clgame.ds.spriteColor[2] = bound( 0, b, 255 );
+	clgame.ds.spriteColor[3] = bound( 0, a, 255 );
+
+	ref.dllFuncs.GL_SetRenderMode( kRenderTransTexture );
+	SPR_DrawGeneric( frame, x, y, width, height, prc );
+	ref.dllFuncs.GL_SetRenderMode( kRenderNormal );
 }
 
 /*
@@ -3908,7 +4014,8 @@ static cl_enginefunc_t gEngfuncs =
 	pfnGetAppID,
 	Cmd_AliasGetList,
 	pfnVguiWrap2_GetMouseDelta,
-	pfnFilteredClientCmd
+	pfnFilteredClientCmd,
+	pfnSPR_DrawTrans
 };
 
 void CL_UnloadProgs( void )
