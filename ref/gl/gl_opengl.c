@@ -2092,6 +2092,7 @@ void pglDeleteTextures( const char* texturename )
 static qboolean rt_raster_additive = false;
 static qboolean rt_raster_blend    = false;
 static qboolean rt_alphatest       = false;
+static qboolean rt_texture2d       = false;
 
 void pglEnable( GLenum cap )
 {
@@ -2099,6 +2100,7 @@ void pglEnable( GLenum cap )
     {
         case GL_BLEND: rt_raster_blend = true; break;
         case GL_ALPHA_TEST: rt_alphatest = true; break;
+        case GL_TEXTURE_2D: rt_texture2d = true; break;
         default: break;
     }
 }
@@ -2108,6 +2110,7 @@ void pglDisable( GLenum cap )
     {
         case GL_BLEND: rt_raster_blend = false; break;
         case GL_ALPHA_TEST: rt_alphatest = false; break;
+        case GL_TEXTURE_2D: rt_texture2d = false; break;
         default: break;
     }
 }
@@ -2245,6 +2248,11 @@ static rt_batchtype_t GetGlBeginEndType()
     }
 
     return RT_BATCH_TYPE_NONE;
+}
+
+static const char *GetCurrentTexture2DName()
+{
+    return rt_texture2d ? rt_state.curTexture2DName : NULL;
 }
 
 
@@ -2465,7 +2473,7 @@ static void TryBeginBatch( RgUtilImScratchTopology glbegin_topology )
             .primitiveIndexInMesh = 0,
             .flags                = ( rt_raster_blend ? RG_MESH_PRIMITIVE_TRANSLUCENT : 0 ) |
                      ( rt_alphatest ? RG_MESH_PRIMITIVE_ALPHA_TESTED : 0 ),
-            .pTextureName = rt_state.curTexture2DName,
+            .pTextureName = GetCurrentTexture2DName(),
             .textureFrame = 0,
             .color        = rgUtilPackColorByte4D( 255, 255, 255, 255 ),
             .emissive     = rt_raster_blend && rt_raster_additive
@@ -2493,7 +2501,7 @@ static void TryBeginBatch( RgUtilImScratchTopology glbegin_topology )
             .flags                = ( rt_raster_blend ? RG_MESH_PRIMITIVE_TRANSLUCENT : 0 ) |
                      ( rt_alphatest ? RG_MESH_PRIMITIVE_ALPHA_TESTED : 0 ) |
                      ( rt_state.curIsSky ? RG_MESH_PRIMITIVE_SKY : 0 ),
-            .pTextureName = rt_state.curTexture2DName,
+            .pTextureName = GetCurrentTexture2DName(),
             .textureFrame = 0,
             .color        = rgUtilPackColorByte4D( 255, 255, 255, 255 ),
             .emissive     = rt_raster_blend && rt_raster_additive
@@ -2729,5 +2737,4 @@ void pglOrtho( GLdouble left, GLdouble right, GLdouble bottom, GLdouble top, GLd
 }
 
 #endif // XASH_RAYTRACING
-
 

@@ -32,7 +32,7 @@ GNU General Public License for more details.
 // RefAPI changelog:
 // 1. Initial release
 // 2. FS functions are removed, instead we have full fs_api_t
-#define REF_API_VERSION 2
+#define REF_API_VERSION 3
 
 
 #define TF_SKY		(TF_SKYSIDE|TF_NOMIPMAP)
@@ -481,6 +481,7 @@ typedef struct ref_interface_s
 	void (*R_Set2DMode)( qboolean enable );
 	void (*R_DrawStretchRaw)( float x, float y, float w, float h, int cols, int rows, const byte *data, qboolean dirty );
 	void (*R_DrawStretchPic)( float x, float y, float w, float h, float s1, float t1, float s2, float t2, int texnum );
+	void (*R_DrawStretchPicEx)( float x, float y, float w, float h, float s0, float t0, float s1, float t1, float s2, float t2, float s3, float t3, int texnum );
 	void (*R_DrawTileClear)( int texnum, int x, int y, int w, int h );
 	void (*FillRGBA)( float x, float y, float w, float h, int r, int g, int b, int a ); // in screen space
 	void (*FillRGBABlend)( float x, float y, float w, float h, int r, int g, int b, int a ); // in screen space

@@ -95,7 +95,7 @@ static dllfunc_t cdll_new_exports[] = 	// allowed only in SDK 2.3 and higher
 };
 
 static void pfnSPR_DrawHoles( int frame, int x, int y, const wrect_t *prc );
-static void pfnSPR_DrawTrans( HSPRITE hPic, int frame, int x, int y, int width, int height, const wrect_t *prc, int r, int g, int b, int a );
+static void pfnSPR_DrawTrans( HSPRITE hPic, int frame, int x, int y, int width, int height, const wrect_t *prc, int flags, int r, int g, int b, int a );
 
 /*
 ====================
@@ -467,57 +467,212 @@ SPR_DrawGeneric
 draw hudsprite routine
 ====================
 */
-static void SPR_DrawGeneric( int frame, float x, float y, float width, float height, const wrect_t *prc )
+typedef struct
 {
-	float	s1, s2, t1, t2;
-	int	texnum;
+	float	s, t;
+} hud_uv_t;
 
-	if( width == -1 && height == -1 )
+static void SPR_SwapUV( hud_uv_t *a, hud_uv_t *b )
+{
+	hud_uv_t tmp = *a;
+	*a = *b;
+	*b = tmp;
+}
+
+static void SPR_ApplyDrawTransFlags( hud_uv_t uv[4], int flags )
+{
+	hud_uv_t base[4];
+
+	memcpy( base, uv, sizeof( base ));
+
+	switch( flags & HUDSPR_ROT_MASK )
 	{
-		int	w, h;
-
-		// assume we get sizes from image
-		ref.dllFuncs.R_GetSpriteParms( &w, &h, NULL, frame, clgame.ds.pSprite );
-
-		width = w;
-		height = h;
+	case HUDSPR_ROT_90:
+		uv[0] = base[3];
+		uv[1] = base[0];
+		uv[2] = base[1];
+		uv[3] = base[2];
+		break;
+	case HUDSPR_ROT_180:
+		uv[0] = base[2];
+		uv[1] = base[3];
+		uv[2] = base[0];
+		uv[3] = base[1];
+		break;
+	case HUDSPR_ROT_270:
+		uv[0] = base[1];
+		uv[1] = base[2];
+		uv[2] = base[3];
+		uv[3] = base[0];
+		break;
+	default:
+		break;
 	}
+
+	if( flags & HUDSPR_FLIP_X )
+	{
+		SPR_SwapUV( &uv[0], &uv[1] );
+		SPR_SwapUV( &uv[3], &uv[2] );
+	}
+
+	if( flags & HUDSPR_FLIP_Y )
+	{
+		SPR_SwapUV( &uv[0], &uv[3] );
+		SPR_SwapUV( &uv[1], &uv[2] );
+	}
+}
+
+static void SPR_LerpUV( hud_uv_t *out, const hud_uv_t *a, const hud_uv_t *b, float t )
+{
+	out->s = a->s + ( b->s - a->s ) * t;
+	out->t = a->t + ( b->t - a->t ) * t;
+}
+
+static qboolean SPR_ScissorEx( float *x, float *y, float *width, float *height, hud_uv_t uv[4] )
+{
+	float clip;
+	float frac;
+	hud_uv_t tmp[4];
+
+	if(( *width == 0 ) || ( *height == 0 ))
+		return false;
+
+	if( *x + *width <= clgame.ds.scissor_x )
+		return false;
+	if( *x >= clgame.ds.scissor_x + clgame.ds.scissor_width )
+		return false;
+	if( *y + *height <= clgame.ds.scissor_y )
+		return false;
+	if( *y >= clgame.ds.scissor_y + clgame.ds.scissor_height )
+		return false;
+
+	memcpy( tmp, uv, sizeof( tmp ));
+
+	if( *x < clgame.ds.scissor_x )
+	{
+		clip = clgame.ds.scissor_x - *x;
+		frac = clip / *width;
+		*x += clip;
+		*width -= clip;
+
+		SPR_LerpUV( &uv[0], &tmp[0], &tmp[1], frac );
+		SPR_LerpUV( &uv[3], &tmp[3], &tmp[2], frac );
+	}
+
+	memcpy( tmp, uv, sizeof( tmp ));
+
+	if( *x + *width > clgame.ds.scissor_x + clgame.ds.scissor_width )
+	{
+		clip = ( *x + *width ) - ( clgame.ds.scissor_x + clgame.ds.scissor_width );
+		frac = ( *width - clip ) / *width;
+		*width -= clip;
+
+		SPR_LerpUV( &uv[1], &tmp[0], &tmp[1], frac );
+		SPR_LerpUV( &uv[2], &tmp[3], &tmp[2], frac );
+	}
+
+	memcpy( tmp, uv, sizeof( tmp ));
+
+	if( *y < clgame.ds.scissor_y )
+	{
+		clip = clgame.ds.scissor_y - *y;
+		frac = clip / *height;
+		*y += clip;
+		*height -= clip;
+
+		SPR_LerpUV( &uv[0], &tmp[0], &tmp[3], frac );
+		SPR_LerpUV( &uv[1], &tmp[1], &tmp[2], frac );
+	}
+
+	memcpy( tmp, uv, sizeof( tmp ));
+
+	if( *y + *height > clgame.ds.scissor_y + clgame.ds.scissor_height )
+	{
+		clip = ( *y + *height ) - ( clgame.ds.scissor_y + clgame.ds.scissor_height );
+		frac = ( *height - clip ) / *height;
+		*height -= clip;
+
+		SPR_LerpUV( &uv[3], &tmp[0], &tmp[3], frac );
+		SPR_LerpUV( &uv[2], &tmp[1], &tmp[2], frac );
+	}
+
+	return *width > 0 && *height > 0;
+}
+
+static void SPR_DrawGenericEx( int frame, float x, float y, float width, float height, const wrect_t *prc, int flags )
+{
+	float drawWidth, drawHeight;
+	int sourceWidth, sourceHeight;
+	int texnum;
+	qboolean autoSize = false;
+	hud_uv_t uv[4];
+
+	ref.dllFuncs.R_GetSpriteParms( &sourceWidth, &sourceHeight, NULL, frame, clgame.ds.pSprite );
+
+	drawWidth = width;
+	drawHeight = height;
 
 	if( prc )
 	{
-		wrect_t	rc;
-
-		rc = *prc;
+		wrect_t	rc = *prc;
 
 		// Sigh! some stupid modmakers set wrong rectangles in hud.txt
-		if( rc.left <= 0 || rc.left >= width ) rc.left = 0;
-		if( rc.top <= 0 || rc.top >= height ) rc.top = 0;
-		if( rc.right <= 0 || rc.right > width ) rc.right = width;
-		if( rc.bottom <= 0 || rc.bottom > height ) rc.bottom = height;
+		if( rc.left <= 0 || rc.left >= sourceWidth ) rc.left = 0;
+		if( rc.top <= 0 || rc.top >= sourceHeight ) rc.top = 0;
+		if( rc.right <= 0 || rc.right > sourceWidth ) rc.right = sourceWidth;
+		if( rc.bottom <= 0 || rc.bottom > sourceHeight ) rc.bottom = sourceHeight;
 
-		// calc user-defined rectangle
-		s1 = (float)rc.left / width;
-		t1 = (float)rc.top / height;
-		s2 = (float)rc.right / width;
-		t2 = (float)rc.bottom / height;
-		width = rc.right - rc.left;
-		height = rc.bottom - rc.top;
+		uv[0].s = uv[3].s = (float)rc.left / sourceWidth;
+		uv[1].s = uv[2].s = (float)rc.right / sourceWidth;
+		uv[0].t = uv[1].t = (float)rc.top / sourceHeight;
+		uv[2].t = uv[3].t = (float)rc.bottom / sourceHeight;
+
+		sourceWidth = rc.right - rc.left;
+		sourceHeight = rc.bottom - rc.top;
 	}
 	else
 	{
-		s1 = t1 = 0.0f;
-		s2 = t2 = 1.0f;
+		uv[0].s = uv[3].s = 0.0f;
+		uv[1].s = uv[2].s = 1.0f;
+		uv[0].t = uv[1].t = 0.0f;
+		uv[2].t = uv[3].t = 1.0f;
 	}
 
+	if( drawWidth <= 0 || drawHeight <= 0 )
+	{
+		drawWidth = sourceWidth;
+		drawHeight = sourceHeight;
+		autoSize = true;
+	}
+
+	if( autoSize && (( flags & HUDSPR_ROT_MASK ) == HUDSPR_ROT_90 || ( flags & HUDSPR_ROT_MASK ) == HUDSPR_ROT_270 ))
+	{
+		float tmp = drawWidth;
+		drawWidth = drawHeight;
+		drawHeight = tmp;
+	}
+
+	SPR_ApplyDrawTransFlags( uv, flags );
+
 	// pass scissor test if supposed
-	if( clgame.ds.scissor_test && !SPR_Scissor( &x, &y, &width, &height, &s1, &t1, &s2, &t2 ))
+	if( clgame.ds.scissor_test && !SPR_ScissorEx( &x, &y, &drawWidth, &drawHeight, uv ))
 		return;
 
 	// scale for screen sizes
-	SPR_AdjustSize( &x, &y, &width, &height );
+	SPR_AdjustSize( &x, &y, &drawWidth, &drawHeight );
 	texnum = ref.dllFuncs.R_GetSpriteTexture( clgame.ds.pSprite, frame );
 	ref.dllFuncs.Color4ub( clgame.ds.spriteColor[0], clgame.ds.spriteColor[1], clgame.ds.spriteColor[2], clgame.ds.spriteColor[3] );
-	ref.dllFuncs.R_DrawStretchPic( x, y, width, height, s1, t1, s2, t2, texnum );
+	ref.dllFuncs.R_DrawStretchPicEx( x, y, drawWidth, drawHeight,
+		uv[0].s, uv[0].t,
+		uv[1].s, uv[1].t,
+		uv[2].s, uv[2].t,
+		uv[3].s, uv[3].t,
+		texnum );
+}
+
+static void SPR_DrawGeneric( int frame, float x, float y, float width, float height, const wrect_t *prc )
+{
+	SPR_DrawGenericEx( frame, x, y, width, height, prc, 0 );
 }
 
 /*
@@ -1557,7 +1712,7 @@ Unlike the legacy SPR_Set + SPR_Draw path, this always uses an alpha-aware
 render mode and takes RGBA in one call.
 =========
 */
-static void GAME_EXPORT pfnSPR_DrawTrans( HSPRITE hPic, int frame, int x, int y, int width, int height, const wrect_t *prc, int r, int g, int b, int a )
+static void GAME_EXPORT pfnSPR_DrawTrans( HSPRITE hPic, int frame, int x, int y, int width, int height, const wrect_t *prc, int flags, int r, int g, int b, int a )
 {
 	clgame.ds.pSprite = CL_GetSpritePointer( hPic );
 
@@ -1570,7 +1725,7 @@ static void GAME_EXPORT pfnSPR_DrawTrans( HSPRITE hPic, int frame, int x, int y,
 	clgame.ds.spriteColor[3] = bound( 0, a, 255 );
 
 	ref.dllFuncs.GL_SetRenderMode( kRenderTransTexture );
-	SPR_DrawGeneric( frame, x, y, width, height, prc );
+	SPR_DrawGenericEx( frame, x, y, width, height, prc, flags );
 	ref.dllFuncs.GL_SetRenderMode( kRenderNormal );
 }
 

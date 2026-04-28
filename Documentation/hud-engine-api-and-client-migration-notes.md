@@ -598,7 +598,7 @@ Important limitation:
 There is also now a dedicated draw endpoint intended for migrated HUD images:
 
 ```c
-void pfnSPR_DrawTrans( HSPRITE hPic, int frame, int x, int y, int width, int height, const wrect_t *prc, int r, int g, int b, int a );
+void pfnSPR_DrawTrans( HSPRITE hPic, int frame, int x, int y, int width, int height, const wrect_t *prc, int flags, int r, int g, int b, int a );
 ```
 
 This should be preferred over the legacy split between:
@@ -615,9 +615,10 @@ Behavior notes:
 - supports tinting
 - supports explicit width/height scaling
 - `width <= 0` or `height <= 0` means use the sprite's native size
+- supports `HUDSPR_FLIP_X`, `HUDSPR_FLIP_Y`, and clockwise `HUDSPR_ROT_90/180/270`
 - still goes through normal HUD coordinate scaling
 
-Because this extends `cl_enginefuncs_t`, engine and client builds should now move together on `CLDLL_INTERFACE_VERSION 9`.
+Because this extends `cl_enginefuncs_t`, engine and client builds should now move together on `CLDLL_INTERFACE_VERSION 10`.
 
 In other words:
 

@@ -114,6 +114,16 @@ struct screenfade_s;
 struct tagPOINT;
 struct event_args_s;
 
+// HUD sprite transform flags for pfnSPR_DrawTrans.
+// Rotation values are clockwise quarter-turns.
+#define HUDSPR_ROT_MASK	0x0003
+#define HUDSPR_ROT_0	0x0000
+#define HUDSPR_ROT_90	0x0001
+#define HUDSPR_ROT_180	0x0002
+#define HUDSPR_ROT_270	0x0003
+#define HUDSPR_FLIP_X	0x0010
+#define HUDSPR_FLIP_Y	0x0020
+
 typedef struct cl_enginefuncs_s
 {
 	// sprite handlers
@@ -310,10 +320,10 @@ typedef struct cl_enginefuncs_s
 	// added in xash-rt HUD migration work
 	// stateless alpha-respecting sprite draw for standalone HUD images and migrated HUD widgets
 	// width/height <= 0 means "use sprite's native size"
-	void		(*pfnSPR_DrawTrans)( HSPRITE hPic, int frame, int x, int y, int width, int height, const wrect_t *prc, int r, int g, int b, int a );
+	void		(*pfnSPR_DrawTrans)( HSPRITE hPic, int frame, int x, int y, int width, int height, const wrect_t *prc, int flags, int r, int g, int b, int a );
 } cl_enginefunc_t;
 
-#define CLDLL_INTERFACE_VERSION	9
+#define CLDLL_INTERFACE_VERSION	10
 
 #ifdef __cplusplus
 }

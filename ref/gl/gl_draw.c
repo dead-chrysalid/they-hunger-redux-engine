@@ -64,19 +64,24 @@ R_DrawStretchPic
 */
 void R_DrawStretchPic( float x, float y, float w, float h, float s1, float t1, float s2, float t2, int texnum )
 {
+	R_DrawStretchPicEx( x, y, w, h, s1, t1, s2, t1, s2, t2, s1, t2, texnum );
+}
+
+void R_DrawStretchPicEx( float x, float y, float w, float h, float s0, float t0, float s1, float t1, float s2, float t2, float s3, float t3, int texnum )
+{
 	GL_Bind( XASH_TEXTURE0, texnum );
 
 	pglBegin( GL_QUADS );
-		pglTexCoord2f( s1, t1 );
+		pglTexCoord2f( s0, t0 );
 		pglVertex2f( x, y );
 
-		pglTexCoord2f( s2, t1 );
+		pglTexCoord2f( s1, t1 );
 		pglVertex2f( x + w, y );
 
 		pglTexCoord2f( s2, t2 );
 		pglVertex2f( x + w, y + h );
 
-		pglTexCoord2f( s1, t2 );
+		pglTexCoord2f( s3, t3 );
 		pglVertex2f( x, y + h );
 	pglEnd();
 }

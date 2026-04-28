@@ -393,6 +393,7 @@ ref_interface_t gReffuncs =
 	R_Set2DMode,
 	R_DrawStretchRaw,
 	R_DrawStretchPic,
+	R_DrawStretchPicEx,
 	R_DrawTileClear,
 	CL_FillRGBA,
 	CL_FillRGBABlend,

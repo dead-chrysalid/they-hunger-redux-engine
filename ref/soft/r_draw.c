@@ -189,16 +189,103 @@ R_DrawStretchPic
 */
 void GAME_EXPORT R_DrawStretchPic( float x, float y, float w, float h, float s1, float t1, float s2, float t2, int texnum )
 {
-	image_t *pic = R_GetTexture(texnum);
-	int width = pic->width, height = pic->height;
-//	GL_Bind( XASH_TEXTURE0, texnum );
-	if( s2 > 1.0f || t2 > 1.0f )
+	R_DrawStretchPicEx( x, y, w, h, s1, t1, s2, t1, s2, t2, s1, t2, texnum );
+}
+
+void GAME_EXPORT R_DrawStretchPicEx( float x, float y, float w, float h, float s0, float t0, float s1, float t1, float s2, float t2, float s3, float t3, int texnum )
+{
+	image_t *pic = R_GetTexture( texnum );
+	pixel_t *buffer;
+	int drawX = (int)x;
+	int drawY = (int)y;
+	int drawW = (int)w;
+	int drawH = (int)h;
+	int xStart = 0, yStart = 0, xEnd, yEnd;
+	qboolean transparent = false;
+
+	if( !pic || !pic->pixels[0] )
 		return;
-	if( s1 < 0.0f || t1 < 0.0f )
+	if( drawW < 1 || drawH < 1 )
 		return;
-	if( w < 1.0f || h < 1.0f )
+
+	xEnd = drawW;
+	yEnd = drawH;
+
+	if( drawX < 0 )
+	{
+		xStart = -drawX;
+		drawX = 0;
+	}
+
+	if( drawY < 0 )
+	{
+		yStart = -drawY;
+		drawY = 0;
+	}
+
+	if( drawX + drawW > vid.width )
+		xEnd = vid.width - drawX;
+	if( drawY + drawH > vid.height )
+		yEnd = vid.height - drawY;
+
+	if( xEnd <= xStart || yEnd <= yStart )
 		return;
-	R_DrawStretchPicImplementation(x,y,w,h, width * s1, height * t1, width * s2, height * t2, pic);
+
+	if( pic->alpha_pixels )
+	{
+		buffer = pic->alpha_pixels;
+		transparent = true;
+	}
+	else buffer = pic->pixels[0];
+
+	for( int outY = yStart; outY < yEnd; ++outY )
+	{
+		float fy = ( drawH > 1 ) ? (float)outY / (float)drawH : 0.0f;
+		float leftS = s0 + ( s3 - s0 ) * fy;
+		float leftT = t0 + ( t3 - t0 ) * fy;
+		float rightS = s1 + ( s2 - s1 ) * fy;
+		float rightT = t1 + ( t2 - t1 ) * fy;
+		pixel_t *dest = vid.buffer + ( drawY + outY ) * vid.rowbytes + drawX;
+		int alpha1 = vid.alpha;
+
+		for( int outX = xStart; outX < xEnd; ++outX )
+		{
+			float fx = ( drawW > 1 ) ? (float)outX / (float)drawW : 0.0f;
+			float sampleS = leftS + ( rightS - leftS ) * fx;
+			float sampleT = leftT + ( rightT - leftT ) * fx;
+			int sampleX = bound( 0, (int)( sampleS * pic->width ), pic->width - 1 );
+			int sampleY = bound( 0, (int)( sampleT * pic->height ), pic->height - 1 );
+			pixel_t src = buffer[sampleY * pic->width + sampleX];
+			int alpha = alpha1;
+
+			if( transparent )
+			{
+				alpha &= src >> ( 16 - 3 );
+				src = src << 3;
+			}
+
+			if( alpha == 0 )
+				continue;
+
+			if( vid.color != COLOR_WHITE )
+				src = vid.modmap[(src & 0xff00)|(vid.color>>8)] << 8 | (src & vid.color & 0xff) | ((src & 0xff) >> 3);
+
+			if( vid.rendermode == kRenderTransAdd )
+			{
+				pixel_t screen = dest[outX - xStart];
+				dest[outX - xStart] = vid.addmap[(src & 0xff00)|(screen>>8)] << 8 | (screen & 0xff) | ((src & 0xff) >> 0);
+			}
+			else if( alpha < 7 )
+			{
+				pixel_t screen = dest[outX - xStart];
+				dest[outX - xStart] = BLEND_ALPHA( alpha, src, screen );
+			}
+			else
+			{
+				dest[outX - xStart] = src;
+			}
+		}
+	}
 }
 
 void Draw_Fill (int x, int y, int w, int h)
