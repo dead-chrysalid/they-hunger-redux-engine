@@ -1126,6 +1126,7 @@ extern cvar_t	*tracerred;
 extern cvar_t	*tracergreen;
 extern cvar_t	*tracerblue;
 extern cvar_t	*traceralpha;
+extern cvar_t	*tracerwidth;
 
 
 extern struct qfrustum_s {

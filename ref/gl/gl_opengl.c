@@ -41,6 +41,7 @@ cvar_t	*tracerred;
 cvar_t	*tracergreen;
 cvar_t	*tracerblue;
 cvar_t	*traceralpha;
+cvar_t	*tracerwidth;
 
 DEFINE_ENGINE_SHARED_CVAR_LIST()
 
@@ -2737,4 +2738,3 @@ void pglOrtho( GLdouble left, GLdouble right, GLdouble bottom, GLdouble top, GLd
 }
 
 #endif // XASH_RAYTRACING
-

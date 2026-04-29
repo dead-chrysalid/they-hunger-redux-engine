@@ -660,6 +660,7 @@ typedef void (*REF_HUMANREADABLE_NAME)( char *out, size_t len );
 	ENGINE_SHARED_CVAR( f, tracergreen ) \
 	ENGINE_SHARED_CVAR( f, tracerblue ) \
 	ENGINE_SHARED_CVAR( f, traceralpha ) \
+	ENGINE_SHARED_CVAR( f, tracerwidth ) \
 	ENGINE_SHARED_CVAR( f, r_sprite_lerping ) \
 	ENGINE_SHARED_CVAR( f, r_sprite_lighting ) \
 	ENGINE_SHARED_CVAR( f, r_drawviewmodel ) \

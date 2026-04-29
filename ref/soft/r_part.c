@@ -21,7 +21,7 @@ GNU General Public License for more details.
 #include "pm_local.h"
 #include "studio.h"
 
-static float gTracerSize[11] = { 1.5f, 0.5f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
+static float gTracerSize[11] = { 1.0f, 0.5f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
 static color24 gTracerColors[] =
 {
 { 255, 255, 255 },		// White
@@ -37,6 +37,11 @@ static color24 gTracerColors[] =
 { 200, 130, 90 },		// More red streaks (garg)
 { 255, 120, 70 },		// Darker red streaks (garg)
 };
+
+static float CL_TracerSize( particle_t *p )
+{
+	return gTracerSize[p->type] * bound( 0.05f, tracerwidth->value, 10.0f );
+}
 
 /*
 ================
@@ -126,6 +131,7 @@ check tracer bbox
 static qboolean CL_CullTracer( particle_t *p, const vec3_t start, const vec3_t end )
 {
 	vec3_t	mins, maxs;
+	float	tracerSize = CL_TracerSize( p );
 	int	i;
 	return false;
 /*
@@ -146,7 +152,7 @@ static qboolean CL_CullTracer( particle_t *p, const vec3_t start, const vec3_t e
 		// don't let it be zero sized
 		if( mins[i] == maxs[i] )
 		{
-			maxs[i] += gTracerSize[p->type] * 2.0f;
+			maxs[i] += tracerSize * 2.0f;
 		}
 	}
 
@@ -213,6 +219,7 @@ void GAME_EXPORT CL_DrawTracers( double frametime, particle_t *cl_active_tracers
 			vec3_t	tmp, normal;
 			color24	*pColor;
 			short alpha = p->packedColor;
+			float	tracerSize;
 
 			// Transform point into screen space
 			TriWorldToScreen( start, screen );
@@ -224,10 +231,11 @@ void GAME_EXPORT CL_DrawTracers( double frametime, particle_t *cl_active_tracers
 			// we don't need Z, we're in screen space
 			tmp[2] = 0;
 			VectorNormalize( tmp );
+			tracerSize = CL_TracerSize( p );
 
 			// build point along noraml line (normal is -y, x)
-			VectorScale( RI.cull_vup, tmp[0] * gTracerSize[p->type], normal );
-			VectorScale( RI.cull_vright, -tmp[1] * gTracerSize[p->type], tmp2 );
+			VectorScale( RI.cull_vup, tmp[0] * tracerSize, normal );
+			VectorScale( RI.cull_vright, -tmp[1] * tracerSize, tmp2 );
 			VectorSubtract( normal, tmp2, normal );
 
 			// compute four vertexes
