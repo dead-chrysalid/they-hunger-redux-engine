@@ -111,13 +111,15 @@ void GL_Bind( GLint tmu, GLenum texnum )
 		pglEnable( glState.currentTextureTargets[tmu] );
 	}
 
+#if !XASH_RAYTRACING
 	if( glState.currentTextures[tmu] == texture->texnum )
 		return;
 
-#if !XASH_RAYTRACING
 	pglBindTexture( texture->target, texture->texnum );
 #else
-    pglBindTexture( texture->target, texture->texnum, texture->name );
+	// RTGL keys textures by name, while the classic GL state cache only tracks
+	// numeric texture slots.  Slots can be reused, so always refresh the RT name.
+	pglBindTexture( texture->target, texture->texnum, texture->name );
 #endif
 	glState.currentTextures[tmu] = texture->texnum;
 }

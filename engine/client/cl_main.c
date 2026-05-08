@@ -72,6 +72,8 @@ convar_t	*cl_charset;
 convar_t	*cl_trace_messages;
 convar_t	*cl_nat;
 convar_t	*hud_utf8;
+convar_t	*hud_truetype;
+convar_t	*hud_truetype_size;
 convar_t	*ui_renderworld;
 
 //
@@ -2842,6 +2844,8 @@ void CL_InitLocal( void )
 	cl_timeout = Cvar_Get( "cl_timeout", "60", 0, "connect timeout (in-seconds)" );
 	cl_charset = Cvar_Get( "cl_charset", "utf-8", FCVAR_ARCHIVE, "1-byte charset to use (iconv style)" );
 	hud_utf8 = Cvar_Get( "hud_utf8", "0", FCVAR_ARCHIVE, "Use utf-8 encoding for hud text" );
+	hud_truetype = Cvar_Get( "hud_truetype", "0", FCVAR_ARCHIVE, "use mainui TrueType rendering for classic HUD text if available" );
+	hud_truetype_size = Cvar_Get( "hud_truetype_size", "32", FCVAR_ARCHIVE, "font height for hud_truetype text" );
 
 	rcon_client_password = Cvar_Get( "rcon_password", "", FCVAR_PRIVILEGED, "remote control client password" );
 	rcon_address = Cvar_Get( "rcon_address", "", FCVAR_PRIVILEGED, "remote control address" );

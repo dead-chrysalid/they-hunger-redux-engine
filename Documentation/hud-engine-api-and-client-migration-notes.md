@@ -156,6 +156,12 @@ int (*pfnVGUI2DrawCharacter)( int x, int y, int ch, unsigned int font );
 int (*pfnVGUI2DrawCharacterAdditive)( int x, int y, int ch, int r, int g, int b, unsigned int font );
 ```
 
+When `hud_truetype` is enabled, classic HUD text calls such as `pfnDrawCharacter`,
+`pfnDrawConsoleString`, centerprint, and `gHUD.DrawHudString` are backed by the
+same mainui TrueType font path used by the menu. The client DLL does not need a
+separate font handle API; keep using the normal HUD string helpers and control
+the rendered size through `hud_truetype_size`.
+
 This gives the client HUD:
 
 - text drawing

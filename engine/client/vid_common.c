@@ -170,6 +170,12 @@ static void VID_Mode_f( void )
 	R_ChangeDisplaySettings( w, h, Cvar_VariableInteger( "fullscreen" ) );
 }
 
+static void VID_Restart_f( void )
+{
+	host.renderinfo_changed = true;
+	VID_CheckChanges();
+}
+
 void VID_Init( void )
 {
 	// system screen width and height (don't suppose for change from console at all)
@@ -191,6 +197,7 @@ void VID_Init( void )
 	// a1ba: planned to be named vid_mode for compability
 	// but supported mode list is filled by backends, so numbers are not portable any more
 	Cmd_AddRestrictedCommand( "vid_setmode", VID_Mode_f, "display video mode" );
+	Cmd_AddRestrictedCommand( "vid_restart", VID_Restart_f, "restart video subsystem" );
 
 	R_Init(); // init renderer
 }

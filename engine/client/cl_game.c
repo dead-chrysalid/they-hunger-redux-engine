@@ -314,6 +314,31 @@ static int CL_AdjustYPos( float y, int height )
 	return yPos;
 }
 
+static qboolean CL_HudTrueTypeReady( void )
+{
+	return hud_truetype && hud_truetype->value && hud_truetype_size && hud_truetype_size->value > 0.0f
+		&& gameui.dllFuncs2.pfnDrawHudCharacter
+		&& gameui.dllFuncs2.pfnGetHudFontHeight
+		&& gameui.dllFuncs2.pfnGetHudCharWidth
+		&& gameui.dllFuncs2.pfnGetHudFontHeight() > 0;
+}
+
+static int CL_HudTrueTypeReadChar( const char **text )
+{
+	int ch;
+
+	if( !text || !*text || !**text )
+		return 0;
+
+	ch = (byte)**text;
+	(*text)++;
+
+	if( hud_utf8 && hud_utf8->value )
+		ch = Con_UtfProcessChar( ch );
+
+	return ch;
+}
+
 /*
 =============
 CL_CenterPrint
@@ -335,6 +360,39 @@ void CL_CenterPrint( const char *text, float y )
 	clgame.centerPrint.time = cl.mtime[0]; // allow pause for centerprint
 	Q_strncpy( clgame.centerPrint.message, text, sizeof( clgame.centerPrint.message ));
 	s = clgame.centerPrint.message;
+
+	if( CL_HudTrueTypeReady() )
+	{
+		const char *p = clgame.centerPrint.message;
+		int ch;
+
+		if( hud_utf8 && hud_utf8->value )
+			Con_UtfProcessChar( 0 );
+
+		while( *p )
+		{
+			if( *p == '\n' )
+			{
+				clgame.centerPrint.lines++;
+				if( width > clgame.centerPrint.totalWidth )
+					clgame.centerPrint.totalWidth = width;
+				width = 0;
+				p++;
+				continue;
+			}
+
+			ch = CL_HudTrueTypeReadChar( &p );
+			if( ch )
+				width += gameui.dllFuncs2.pfnGetHudCharWidth( ch );
+			length++;
+		}
+
+		if( width > clgame.centerPrint.totalWidth )
+			clgame.centerPrint.totalWidth = width;
+		clgame.centerPrint.totalHeight = clgame.centerPrint.lines * gameui.dllFuncs2.pfnGetHudFontHeight();
+		clgame.centerPrint.y = CL_AdjustYPos( y, clgame.centerPrint.totalHeight );
+		return;
+	}
 
 	// count the number of lines for centering
 	while( *s )
@@ -703,6 +761,49 @@ void CL_DrawCenterPrint( void )
 	y = clgame.centerPrint.y; // start y
 	colorDefault = g_color_table[7];
 	pText = clgame.centerPrint.message;
+
+	if( CL_HudTrueTypeReady() )
+	{
+		const char *read;
+		int line[MAX_LINELENGTH];
+		int ch;
+
+		charHeight = gameui.dllFuncs2.pfnGetHudFontHeight();
+		if( hud_utf8 && hud_utf8->value )
+			Con_UtfProcessChar( 0 );
+
+		for( i = 0; i < clgame.centerPrint.lines; i++ )
+		{
+			lineLength = 0;
+			width = 0;
+
+			while( *pText && *pText != '\n' && lineLength < MAX_LINELENGTH )
+			{
+				read = pText;
+				ch = CL_HudTrueTypeReadChar( &read );
+				pText = (char *)read;
+				if( !ch )
+					continue;
+
+				line[lineLength++] = ch;
+				width += gameui.dllFuncs2.pfnGetHudCharWidth( ch );
+			}
+
+			if( *pText == '\n' )
+				pText++;
+
+			x = CL_AdjustXPos( -1, width, clgame.centerPrint.totalWidth );
+			for( j = 0; j < lineLength; j++ )
+			{
+				if( x >= 0 && y >= 0 && x <= refState.width )
+					x += gameui.dllFuncs2.pfnDrawHudCharacter( x, y, line[j], colorDefault[0], colorDefault[1], colorDefault[2] );
+			}
+
+			y += charHeight;
+		}
+		return;
+	}
+
 	Con_DrawCharacterLen( 0, NULL, &charHeight );
 
 	for( i = 0; i < clgame.centerPrint.lines; i++ )
@@ -1904,6 +2005,16 @@ int GAME_EXPORT CL_GetScreenInfo( SCREENINFO *pscrinfo )
 		clgame.scrInfo.iFlags &= ~SCRINFO_STRETCHED;
 	}
 
+	if( CL_HudTrueTypeReady() )
+	{
+		int i;
+		float toScrInfo = clgame.scrInfo.iWidth / (float)refState.width;
+
+		clgame.scrInfo.iCharHeight = (int)( gameui.dllFuncs2.pfnGetHudFontHeight() * toScrInfo + 0.5f );
+		for( i = 0; i < 256; i++ )
+			clgame.scrInfo.charWidths[i] = (short)( gameui.dllFuncs2.pfnGetHudCharWidth( i ) * toScrInfo + 0.5f );
+	}
+
 	if( !pscrinfo ) return 0;
 
 	if( pscrinfo->iSize != clgame.scrInfo.iSize )
@@ -2130,13 +2241,33 @@ returns drawed chachter width (in real screen pixels)
 */
 static int GAME_EXPORT pfnDrawCharacter( int x, int y, int number, int r, int g, int b )
 {
+	int drawNumber = number;
+
+	if( hud_utf8->value )
+		drawNumber = Con_UtfProcessChar( drawNumber );
+
+	if( CL_HudTrueTypeReady() )
+	{
+		float fx = x;
+		float fy = y;
+		float fw = 1.0f;
+		float fh = 1.0f;
+		int advance;
+
+		if( !drawNumber || drawNumber < 32 )
+			return 0;
+		if( y < -clgame.scrInfo.iCharHeight )
+			return 0;
+
+		SPR_AdjustSize( &fx, &fy, &fw, &fh );
+		advance = gameui.dllFuncs2.pfnDrawHudCharacter((int)( fx + 0.5f ), (int)( fy + 0.5f ), drawNumber, r, g, b );
+		return (int)( advance * clgame.scrInfo.iWidth / (float)refState.width + 0.5f );
+	}
+
 	if( !cls.creditsFont.valid )
 		return 0;
 
-	if( hud_utf8->value )
-		number = Con_UtfProcessChar( number );
-
-	number &= 255;
+	number = drawNumber & 255;
 
 	if( number < 32 ) return 0;
 	if( y < -clgame.scrInfo.iCharHeight )
