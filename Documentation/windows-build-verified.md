@@ -118,6 +118,18 @@ After a successful solution build, these files should exist in `x64/Release/`:
 
 You should also see matching `.pdb`, `.lib`, and `.exp` files for the DLL projects.
 
+## Local Deploy Layout
+
+The checked-in MSBuild deploy config now copies engine/runtime DLLs into the local Xash3D install after project builds:
+
+- `D:\Games\Xash3d\rt_bin\`
+
+The paths live in `Directory.Build.props` and can be overridden from MSBuild with `/p:XashRtDeployRoot=...` or disabled with `/p:XashRtDeployEnabled=false`.
+
+Keep `RTGL1\Build\x64-Release\RayTracedGL1.dll` matched with `RTGL1\Build\x64-Release\RayTracedGL1.lib`. A stale RTGL DLL can make Windows fail to load `ref_gl.dll` with "The specified procedure could not be found."
+
+Game client/server DLLs are built and deployed by the HLSDK project, not this engine project.
+
 ## Current Status Notes
 
 The build still emits many warnings, but the verified Release x64 build succeeds.

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project>
+  <PropertyGroup>
+    <XashRtDeployEnabled Condition="'$(XashRtDeployEnabled)' == ''">true</XashRtDeployEnabled>
+    <XashRtDeployRoot Condition="'$(XashRtDeployRoot)' == ''">D:\Games\Xash3d</XashRtDeployRoot>
+    <XashRtEngineDeployDir Condition="'$(XashRtEngineDeployDir)' == ''">$(XashRtDeployRoot)\rt_bin\</XashRtEngineDeployDir>
+    <XashRtRayTracedGL1Dll Condition="'$(XashRtRayTracedGL1Dll)' == ''">$(MSBuildThisFileDirectory)RTGL1\Build\x64-$(Configuration)\RayTracedGL1.dll</XashRtRayTracedGL1Dll>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(XashRtSdl2Dll)' == '' And '$(Platform)' == 'x64'">
+    <XashRtSdl2Dll>$(MSBuildThisFileDirectory)SDL2_VC\lib\x64\SDL2.dll</XashRtSdl2Dll>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(XashRtSdl2Dll)' == '' And ('$(Platform)' == 'Win32' Or '$(Platform)' == 'x86')">
+    <XashRtSdl2Dll>$(MSBuildThisFileDirectory)SDL2_VC\lib\x86\SDL2.dll</XashRtSdl2Dll>
+  </PropertyGroup>
+</Project>

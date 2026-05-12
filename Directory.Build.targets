@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project>
+  <PropertyGroup>
+    <_XashRtIsEngineDllProject Condition="'$(MSBuildProjectName)' == 'xash' Or '$(MSBuildProjectName)' == 'filesystem_stdio' Or '$(MSBuildProjectName)' == 'ref_gl' Or '$(MSBuildProjectName)' == 'menu'">true</_XashRtIsEngineDllProject>
+  </PropertyGroup>
+
+  <Target Name="DeployXashRtEngineDlls"
+          AfterTargets="Build"
+          Condition="'$(XashRtDeployEnabled)' == 'true' And '$(_XashRtIsEngineDllProject)' == 'true'">
+    <ItemGroup>
+      <_XashRtEngineDeployDll Include="$(TargetPath)"
+                              Condition="'$(TargetExt)' == '.dll' And Exists('$(TargetPath)')" />
+      <_XashRtEngineDeployDll Include="$(XashRtRayTracedGL1Dll)"
+                              Condition="'$(MSBuildProjectName)' == 'ref_gl' And Exists('$(XashRtRayTracedGL1Dll)')" />
+      <_XashRtEngineDeployDll Include="$(XashRtSdl2Dll)"
+                              Condition="'$(MSBuildProjectName)' == 'xash' And '$(XashRtSdl2Dll)' != '' And Exists('$(XashRtSdl2Dll)')" />
+    </ItemGroup>
+
+    <MakeDir Directories="$(XashRtEngineDeployDir)" />
+    <Copy SourceFiles="@(_XashRtEngineDeployDll)"
+          DestinationFolder="$(XashRtEngineDeployDir)"
+          SkipUnchangedFiles="true"
+          Condition="'@(_XashRtEngineDeployDll)' != ''" />
+  </Target>
+</Project>
