@@ -1,0 +1,43 @@
+diff --git a/Source/Shaders/EfColorTint.comp b/Source/Shaders/EfColorTint.comp
+index 3d2ff2f..984e30e 100644
+--- a/Source/Shaders/EfColorTint.comp
++++ b/Source/Shaders/EfColorTint.comp
+@@ -42,0 +43,13 @@ vec3 applyTint(vec3 color)
++vec3 applyImpactLens(ivec2 pix)
++{
++    vec2 c = effect_getCenteredFromPix(pix);
++    float radiusSquared = dot(c, c);
++    float edgeWeight = smoothstep(0.04, 1.5, radiusSquared);
++    float strength = clamp(push.custom.intensity, 0.0, 0.5) * getProgress();
++
++    // Pull edge samples toward the center. This expands the middle of the
++    // image while progressively bending the perimeter like a short lens hit.
++    vec2 sampleCoord = c * (1.0 - strength * edgeWeight);
++    return effect_loadFromSource_Centered(sampleCoord);
++}
++
+@@ -53,0 +67,7 @@ void main()
++    vec3 rgb;
++    if (push.custom.r < 0.0)
++    {
++        rgb = applyImpactLens(pix);
++    }
++    else
++    {
+@@ -55,2 +75,2 @@ void main()
+-    vec2 c = effect_getCenteredFromPix(pix);
+-    c *= mix(1, 0.985, getProgress());
++        vec2 c = effect_getCenteredFromPix(pix);
++        c *= mix(1, 0.985, getProgress());
+@@ -58 +78 @@ void main()
+-    vec3 rgb = mix(effect_loadFromSource(pix), applyTint(effect_loadFromSource_Centered(c)), 0.5 * dot(c, c));
++        rgb = mix(effect_loadFromSource(pix), applyTint(effect_loadFromSource_Centered(c)), 0.5 * dot(c, c));
+@@ -60 +80 @@ void main()
+-    vec3 rgb = applyTint(effect_loadFromSource(pix));
++        rgb = applyTint(effect_loadFromSource(pix));
+@@ -61,0 +82 @@ void main()
++    }
+@@ -64 +85 @@ void main()
+-}
+\ No newline at end of file
++}

@@ -793,6 +793,8 @@ typedef struct rt_state_s
     qboolean curBrushSurfaceIsAnimated;
 
 	uint64_t flashlight_uniqueid;
+	qboolean killfx_triggered;
+	float    killfx_end_time;
 
 } rt_state_t;
 extern rt_state_t rt_state;
@@ -908,6 +910,11 @@ typedef struct rt_cvars_t
 		rt_ef_chraber,
 		rt_ef_vintage,
 		rt_ef_water,
+		rt_killfx_distortion,
+		rt_killfx_lens_strength,
+		rt_killfx_distortion_duration,
+		rt_killfx_distortion_fade_in,
+		rt_killfx_distortion_fade_out,
 
 		_rt_labcoat,
 		rt_labcoat_force,

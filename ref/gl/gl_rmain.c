@@ -1642,8 +1642,6 @@ void R_EndFrame( void )
         prevvalue = RT_CVAR_TO_FLOAT( rt_classic );
     }
 
-	assert( tr.lightstylevalue[ 0 ] == 0 || tr.lightstylevalue[ 0 ] == 158 );
-
 	float lightstyles[ RT_ARRAYSIZE( tr.lightstylevalue ) ];
     for( uint32_t i = 0; i < RT_ARRAYSIZE( tr.lightstylevalue ); i++ )
     {
@@ -1796,6 +1794,23 @@ void R_EndFrame( void )
         .speed                 = 1.0f,
         .xMultiplier           = 0.5f,
     };
+
+	if( rt_state.killfx_triggered )
+	{
+		rt_state.killfx_triggered = false;
+		rt_state.killfx_end_time = gpGlobals->realtime +
+			RT_CLAMP( RT_CVAR_TO_FLOAT( rt_killfx_distortion_duration ), 0.0f, 5.0f );
+	}
+
+	RgPostEffectColorTint killfx_lens = {
+		.isActive = RT_CVAR_TO_BOOL( rt_killfx_distortion ) &&
+			gpGlobals->realtime < rt_state.killfx_end_time,
+		.transitionDurationIn = RT_CLAMP( RT_CVAR_TO_FLOAT( rt_killfx_distortion_fade_in ), 0.0f, 5.0f ),
+		.transitionDurationOut = RT_CLAMP( RT_CVAR_TO_FLOAT( rt_killfx_distortion_fade_out ), 0.0f, 5.0f ),
+		.intensity = RT_CLAMP( RT_CVAR_TO_FLOAT( rt_killfx_lens_strength ), 0.0f, 0.5f ),
+		// A negative red component selects the private radial-lens shader mode.
+		.color = { -1.0f, 0.0f, 0.0f },
+	};
 	
 	RgPostEffectTeleport teleport_effect = {
         .isActive              = true,
@@ -1807,6 +1822,7 @@ void R_EndFrame( void )
         .sType                = RG_STRUCTURE_TYPE_POSTEFFECTS,
         .pNext                = &lightmap_params,
         .pChromaticAberration = &chromatic_aberration_effect,
+		.pColorTint            = &killfx_lens,
         .pTeleport            = RT_IsPortalPosteffectActive() ? &teleport_effect : NULL,
         .pWaves = ENGINE_GET_PARM( PARM_CONNSTATE ) == ca_active ? &waves_effect : NULL,
         .pCRT   = &crt_effect,

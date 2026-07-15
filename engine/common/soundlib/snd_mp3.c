@@ -27,6 +27,7 @@ qboolean Sound_LoadMPG( const char *name, const byte *buffer, fs_offset_t filesi
 {
 	void	*mpeg;
 	size_t	pos = 0;
+	size_t	headerSize;
 	size_t	bytesWrite = 0;
 	byte	out[OUTBUF_SIZE];
 	size_t	outsize, padsize;
@@ -34,8 +35,10 @@ qboolean Sound_LoadMPG( const char *name, const byte *buffer, fs_offset_t filesi
 	wavinfo_t	sc;
 
 	// load the file
-	if( !buffer || filesize < FRAME_SIZE )
+	if( !buffer || filesize <= 0 )
 		return false;
+
+	headerSize = filesize < FRAME_SIZE ? (size_t)filesize : (size_t)FRAME_SIZE;
 
 	// couldn't create decoder
 	if(( mpeg = create_decoder( &ret )) == NULL )
@@ -44,7 +47,7 @@ qboolean Sound_LoadMPG( const char *name, const byte *buffer, fs_offset_t filesi
 	if( ret ) Con_DPrintf( S_ERROR "%s\n", get_error( mpeg ));
 
 	// trying to read header
-	if( !feed_mpeg_header( mpeg, buffer, FRAME_SIZE, filesize, &sc ))
+	if( !feed_mpeg_header( mpeg, buffer, headerSize, filesize, &sc ))
 	{
 		Con_DPrintf( S_ERROR "Sound_LoadMPG: failed to load (%s): %s\n", name, get_error( mpeg ));
 		close_decoder( mpeg );
@@ -57,7 +60,7 @@ qboolean Sound_LoadMPG( const char *name, const byte *buffer, fs_offset_t filesi
 	sound.loopstart = -1;
 	sound.size = ( sound.channels * sound.rate * sound.width ) * ( sc.playtime / 1000 ); // in bytes
 	padsize = sound.size % FRAME_SIZE;
-	pos += FRAME_SIZE; // evaluate pos
+	pos += headerSize; // evaluate pos
 
 	if( !sound.size )
 	{

@@ -159,6 +159,7 @@ typedef struct channel_s
 	vec3_t		origin;		// only use if fixed_origin is set
 	float		dist_mult;	// distance multiplier (attenuation/clipK)
 	int		master_vol;	// 0-255 master volume
+	float		mix_gain;	// additional per-channel gain applied by the software mixer
 	qboolean		isSentence;	// bit who indicated sentence
 	int		basePitch;	// base pitch percent (100% is normal pitch playback)
 	float		pitch;		// real-time pitch after any modulation or shift by dynamic data

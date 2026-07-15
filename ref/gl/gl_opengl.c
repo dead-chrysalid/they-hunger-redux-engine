@@ -851,6 +851,11 @@ void RT_ClassicToggle( void )
     gEngfuncs.Cvar_SetValue( rt_cvars.rt_classic->name, newval );
 }
 
+void RT_KillFxTrigger( void )
+{
+	rt_state.killfx_triggered = true;
+}
+
 void RT_WaterColor( void )
 {
     if( gEngfuncs.Cmd_Argc() != 4 )
@@ -1021,6 +1026,11 @@ void GL_InitCommands( void )
 	CVAR_DEF_T( rt_ef_chraber,				"0.1",	"chromatic aberration intensity" )
 	CVAR_DEF_T( rt_ef_vintage,				"0",	"[0, 4] vintage effects, disabled if rt_renderscale>0" )
 	CVAR_DEF_T( rt_ef_water,				"1",	"warp screen while under water" )
+	CVAR_DEF_T( rt_killfx_distortion,		"1",	"enable the kill effect lens pulse" )
+	CVAR_DEF_T( rt_killfx_lens_strength,	"0.12", "kill effect fisheye zoom strength" )
+	CVAR_DEF_T( rt_killfx_distortion_duration,	"0.08",	"kill effect distortion hold time in seconds" )
+	CVAR_DEF_T( rt_killfx_distortion_fade_in,	"0.025", "kill effect distortion fade-in time in seconds" )
+	CVAR_DEF_T( rt_killfx_distortion_fade_out,	"0.28",	"kill effect distortion fade-out time in seconds" )
 
 	CVAR_DEF_T( _rt_labcoat,				"0",	"internal variable; 0 - use default model, 1 - use labcoat (without HEV suit)" )
 	CVAR_DEF_T( rt_labcoat_force,			"0",	"1 - force labcoat player model, 2 - force HEV, 0 - auto" )
@@ -1038,6 +1048,7 @@ void GL_InitCommands( void )
 
     gEngfuncs.Cmd_AddCommand(
         "rt_classic_toggle", &RT_ClassicToggle, "switch between classic and ray traced renderer" );
+	gEngfuncs.Cmd_AddCommand( "rt_killfx_trigger", &RT_KillFxTrigger, "trigger the kill effect edge distortion" );
 
     gEngfuncs.Cmd_AddCommand( "rt_me_water",
                               &RT_WaterColor,

@@ -218,15 +218,24 @@ void S_PaintMonoFrom8( portable_samplepair_t *pbuf, int *volume, byte *pData, in
 {
 	int	*lscale, *rscale;
 	int 	i, data;
+	qboolean boosted = ( volume[0] > 255 || volume[1] > 255 );
 
-	lscale = snd_scaletable[volume[0] >> SND_SCALE_SHIFT];
-	rscale = snd_scaletable[volume[1] >> SND_SCALE_SHIFT];
+	lscale = boosted ? NULL : snd_scaletable[volume[0] >> SND_SCALE_SHIFT];
+	rscale = boosted ? NULL : snd_scaletable[volume[1] >> SND_SCALE_SHIFT];
 
 	for( i = 0; i < outCount; i++ )
 	{
 		data = pData[i];
-		pbuf[i].left += lscale[data];
-		pbuf[i].right += rscale[data];
+		if( boosted )
+		{
+			pbuf[i].left += ((signed char)data) * volume[0];
+			pbuf[i].right += ((signed char)data) * volume[1];
+		}
+		else
+		{
+			pbuf[i].left += lscale[data];
+			pbuf[i].right += rscale[data];
+		}
 	}
 }
 
@@ -236,17 +245,26 @@ void S_PaintStereoFrom8( portable_samplepair_t *pbuf, int *volume, byte *pData, 
 	uint	left, right;
 	word	*data;
 	int	i;
+	qboolean boosted = ( volume[0] > 255 || volume[1] > 255 );
 
-	lscale = snd_scaletable[volume[0] >> SND_SCALE_SHIFT];
-	rscale = snd_scaletable[volume[1] >> SND_SCALE_SHIFT];
+	lscale = boosted ? NULL : snd_scaletable[volume[0] >> SND_SCALE_SHIFT];
+	rscale = boosted ? NULL : snd_scaletable[volume[1] >> SND_SCALE_SHIFT];
 	data = (word *)pData;
 
 	for( i = 0; i < outCount; i++, data++ )
 	{
 		left = (byte)((*data & 0x00FF));
 		right = (byte)((*data & 0xFF00) >> 8);
-		pbuf[i].left += lscale[left];
-		pbuf[i].right += rscale[right];
+		if( boosted )
+		{
+			pbuf[i].left += ((signed char)left) * volume[0];
+			pbuf[i].right += ((signed char)right) * volume[1];
+		}
+		else
+		{
+			pbuf[i].left += lscale[left];
+			pbuf[i].right += rscale[right];
+		}
 	}
 }
 
@@ -295,6 +313,7 @@ void S_Mix8Mono( portable_samplepair_t *pbuf, int *volume, byte *pData, int inpu
 	int	i, sampleIndex = 0;
 	uint	sampleFrac = inputOffset;
 	int	*lscale, *rscale;
+	qboolean boosted = ( volume[0] > 255 || volume[1] > 255 );
 
 	if( timecompress != 0 )
 	{
@@ -309,13 +328,21 @@ void S_Mix8Mono( portable_samplepair_t *pbuf, int *volume, byte *pData, int inpu
 		return;
 	}
 
-	lscale = snd_scaletable[volume[0] >> SND_SCALE_SHIFT];
-	rscale = snd_scaletable[volume[1] >> SND_SCALE_SHIFT];
+	lscale = boosted ? NULL : snd_scaletable[volume[0] >> SND_SCALE_SHIFT];
+	rscale = boosted ? NULL : snd_scaletable[volume[1] >> SND_SCALE_SHIFT];
 
 	for( i = 0; i < outCount; i++ )
 	{
-		pbuf[i].left += lscale[pData[sampleIndex]];
-		pbuf[i].right += rscale[pData[sampleIndex]];
+		if( boosted )
+		{
+			pbuf[i].left += ((signed char)pData[sampleIndex]) * volume[0];
+			pbuf[i].right += ((signed char)pData[sampleIndex]) * volume[1];
+		}
+		else
+		{
+			pbuf[i].left += lscale[pData[sampleIndex]];
+			pbuf[i].right += rscale[pData[sampleIndex]];
+		}
 		sampleFrac += rateScale;
 		sampleIndex += FIX_INTPART( sampleFrac );
 		sampleFrac = FIX_FRACPART( sampleFrac );
@@ -327,6 +354,7 @@ void S_Mix8Stereo( portable_samplepair_t *pbuf, int *volume, byte *pData, int in
 	int	i, sampleIndex = 0;
 	uint	sampleFrac = inputOffset;
 	int	*lscale, *rscale;
+	qboolean boosted = ( volume[0] > 255 || volume[1] > 255 );
 
 	// Not using pitch shift?
 	if( rateScale == FIX( 1 ))
@@ -335,13 +363,21 @@ void S_Mix8Stereo( portable_samplepair_t *pbuf, int *volume, byte *pData, int in
 		return;
 	}
 
-	lscale = snd_scaletable[volume[0] >> SND_SCALE_SHIFT];
-	rscale = snd_scaletable[volume[1] >> SND_SCALE_SHIFT];
+	lscale = boosted ? NULL : snd_scaletable[volume[0] >> SND_SCALE_SHIFT];
+	rscale = boosted ? NULL : snd_scaletable[volume[1] >> SND_SCALE_SHIFT];
 
 	for( i = 0; i < outCount; i++ )
 	{
-		pbuf[i].left += lscale[pData[sampleIndex+0]];
-		pbuf[i].right += rscale[pData[sampleIndex+1]];
+		if( boosted )
+		{
+			pbuf[i].left += ((signed char)pData[sampleIndex+0]) * volume[0];
+			pbuf[i].right += ((signed char)pData[sampleIndex+1]) * volume[1];
+		}
+		else
+		{
+			pbuf[i].left += lscale[pData[sampleIndex+0]];
+			pbuf[i].right += rscale[pData[sampleIndex+1]];
+		}
 		sampleFrac += rateScale;
 		sampleIndex += FIX_INTPART( sampleFrac )<<1;
 		sampleFrac = FIX_FRACPART( sampleFrac );
@@ -398,11 +434,12 @@ void S_MixChannel( channel_t *pChannel, void *pData, int outputOffset, int input
 	paintbuffer_t		*ppaint = MIX_GetCurrentPaintbufferPtr();
 	wavdata_t			*pSource = pChannel->sfx->cache;
 	portable_samplepair_t	*pbuf;
+	const float mixGain = pChannel->mix_gain > 0.0f ? pChannel->mix_gain : 1.0f;
 
 	Assert( pSource != NULL );
 
-	pvol[0] = bound( 0, pChannel->leftvol, 255 );
-	pvol[1] = bound( 0, pChannel->rightvol, 255 );
+	pvol[0] = bound( 0, (int)( pChannel->leftvol * mixGain ), 255 * 16 );
+	pvol[1] = bound( 0, (int)( pChannel->rightvol * mixGain ), 255 * 16 );
 	pbuf = ppaint->pbuf + outputOffset;
 
 	if( pSource->channels == 1 )

@@ -112,6 +112,7 @@ void S_FreeChannel( channel_t *ch )
 	ch->name[0] = '\0';
 	ch->use_loop = false;
 	ch->isSentence = false;
+	ch->mix_gain = 0.0f;
 
 	// clear mixer
 	memset( &ch->pMixer, 0, sizeof( ch->pMixer ));
@@ -489,7 +490,7 @@ it will never be restarted.  Use StartStaticSound (pass CHAN_STATIC to EMIT_SOUN
 SV_StartSound.
 ====================
 */
-void S_StartSound( const vec3_t pos, int ent, int chan, sound_t handle, float fvol, float attn, int pitch, int flags )
+static void S_StartSoundWithMixGain( const vec3_t pos, int ent, int chan, sound_t handle, float fvol, float attn, int pitch, int flags, float mixGain )
 {
 	wavdata_t	*pSource;
 	sfx_t	*sfx = NULL;
@@ -539,6 +540,7 @@ void S_StartSound( const vec3_t pos, int ent, int chan, sound_t handle, float fv
 	target_chan->localsound = (flags & SND_LOCALSOUND) ? true : false;
 	target_chan->dist_mult = (attn / SND_CLIP_DISTANCE);
 	target_chan->master_vol = vol;
+	target_chan->mix_gain = bound( 1.0f, mixGain, 16.0f );
 	target_chan->entnum = ent;
 	target_chan->entchannel = chan;
 	target_chan->basePitch = pitch;
@@ -607,6 +609,11 @@ void S_StartSound( const vec3_t pos, int ent, int chan, sound_t handle, float fv
 			break;
 		}
 	}
+}
+
+void S_StartSound( const vec3_t pos, int ent, int chan, sound_t handle, float fvol, float attn, int pitch, int flags )
+{
+	S_StartSoundWithMixGain( pos, ent, chan, handle, fvol, attn, pitch, flags, 1.0f );
 }
 
 /*
@@ -795,6 +802,7 @@ void S_AmbientSound( const vec3_t pos, int ent, sound_t handle, float fvol, floa
 	ch->use_loop = (flags & SND_STOP_LOOPING) ? false : true;
 	ch->localsound = (flags & SND_LOCALSOUND) ? true : false;
 	ch->master_vol = vol;
+	ch->mix_gain = 1.0f;
 	ch->dist_mult = (attn / SND_CLIP_DISTANCE);
 	ch->entchannel = CHAN_STATIC;
 	ch->basePitch = pitch;
@@ -818,6 +826,19 @@ void S_StartLocalSound(  const char *name, float volume, qboolean reliable )
 	if( !dma.initialized ) return;
 	sfxHandle = S_RegisterSound( name );
 	S_StartSound( NULL, s_listener.entnum, channel, sfxHandle, volume, ATTN_NONE, PITCH_NORM, flags );
+}
+
+static void S_StartLocalSoundWithMixGain( const char *name, float volume, float mixGain, qboolean reliable )
+{
+	sound_t	sfxHandle;
+	int	flags = (SND_LOCALSOUND|SND_STOP_LOOPING);
+	int	channel = CHAN_AUTO;
+
+	if( reliable ) channel = CHAN_STATIC;
+
+	if( !dma.initialized ) return;
+	sfxHandle = S_RegisterSound( name );
+	S_StartSoundWithMixGain( NULL, s_listener.entnum, channel, sfxHandle, volume, ATTN_NONE, PITCH_NORM, flags, mixGain );
 }
 
 /*
@@ -1723,6 +1744,19 @@ void S_PlayVol_f( void )
 	S_StartLocalSound( Cmd_Argv( 1 ), Q_atof( Cmd_Argv( 2 )), false );
 }
 
+void S_PlayVolLocal_f( void )
+{
+	if( Cmd_Argc() < 3 )
+	{
+		Con_Printf( S_USAGE "playvol_local <soundfile> <volume> [mix gain]\n" );
+		return;
+	}
+
+	// A static local channel cannot be replaced by weapon or item sounds.
+	S_StartLocalSoundWithMixGain( Cmd_Argv( 1 ), Q_atof( Cmd_Argv( 2 )),
+		Cmd_Argc() >= 4 ? Q_atof( Cmd_Argv( 3 )) : 1.0f, true );
+}
+
 static void S_Say( const char *name, qboolean reliable )
 {
 	char sentence[1024];
@@ -1917,6 +1951,7 @@ qboolean S_Init( void )
 	Cmd_AddCommand( "play", S_Play_f, "playing a specified sound file" );
 	Cmd_AddCommand( "play2", S_Play2_f, "playing a group of specified sound files" ); // nehahra stuff
 	Cmd_AddCommand( "playvol", S_PlayVol_f, "playing a specified sound file with specified volume" );
+	Cmd_AddCommand( "playvol_local", S_PlayVolLocal_f, "playing a reliable non-spatial sound with specified volume and optional mix gain" );
 	Cmd_AddCommand( "stopsound", S_StopSound_f, "stop all sounds" );
 	Cmd_AddCommand( "music", S_Music_f, "starting a background track" );
 	Cmd_AddCommand( "soundlist", S_SoundList_f, "display loaded sounds" );
@@ -1960,6 +1995,7 @@ void S_Shutdown( void )
 
 	Cmd_RemoveCommand( "play" );
 	Cmd_RemoveCommand( "playvol" );
+	Cmd_RemoveCommand( "playvol_local" );
 	Cmd_RemoveCommand( "stopsound" );
 	Cmd_RemoveCommand( "music" );
 	Cmd_RemoveCommand( "soundlist" );
