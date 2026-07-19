@@ -2445,6 +2445,9 @@ static void R_StudioDrawPoints( void )
 		uint startArrayElems = g_studio.numelems;
 		short	*ptricmds;
 		float	s, t;
+#if XASH_RAYTRACING
+		qboolean oldRasterized = rt_state.curIsRasterized;
+#endif
 
 		pmesh = g_studio.meshes[j].mesh;
 		ptricmds = (short *)((byte *)m_pStudioHeader + pmesh->triindex);
@@ -2487,8 +2490,14 @@ static void R_StudioDrawPoints( void )
         rt_state.curStudioSubmodel = ( int )( m_pSubModel - ( mstudiomodel_t* )modelbase );
         rt_state.curStudioMesh     = j;
         rt_state.curStudioGlend    = 0;
-        rt_state.curStudioAdditive = FBitSet( g_nFaceFlags, STUDIO_NF_ADDITIVE ) &&
-            !FBitSet( g_nFaceFlags, STUDIO_NF_MASKED );
+
+		// Additive studio textures are authored as effect cards. Submit those
+		// meshes through the same raster-effects path used by sprites, particles,
+		// and beams so their crossed planes blend as a glow instead of becoming
+		// translucent ray-traced geometry. Ordinary studio meshes stay unchanged.
+		rt_state.curIsRasterized = oldRasterized ||
+			( FBitSet( g_nFaceFlags, STUDIO_NF_ADDITIVE ) &&
+			  !FBitSet( g_nFaceFlags, STUDIO_NF_MASKED ));
 #endif
 
 #if !XASH_RAYTRACING
@@ -2517,7 +2526,7 @@ static void R_StudioDrawPoints( void )
         rt_state.curStudioSubmodel = -1;
         rt_state.curStudioMesh     = -1;
         rt_state.curStudioGlend    = -1;
-        rt_state.curStudioAdditive = false;
+		rt_state.curIsRasterized      = oldRasterized;
 #endif
 
 		if( FBitSet( g_nFaceFlags, STUDIO_NF_MASKED ))
