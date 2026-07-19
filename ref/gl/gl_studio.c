@@ -2487,6 +2487,8 @@ static void R_StudioDrawPoints( void )
         rt_state.curStudioSubmodel = ( int )( m_pSubModel - ( mstudiomodel_t* )modelbase );
         rt_state.curStudioMesh     = j;
         rt_state.curStudioGlend    = 0;
+        rt_state.curStudioAdditive = FBitSet( g_nFaceFlags, STUDIO_NF_ADDITIVE ) &&
+            !FBitSet( g_nFaceFlags, STUDIO_NF_MASKED );
 #endif
 
 #if !XASH_RAYTRACING
@@ -2515,6 +2517,7 @@ static void R_StudioDrawPoints( void )
         rt_state.curStudioSubmodel = -1;
         rt_state.curStudioMesh     = -1;
         rt_state.curStudioGlend    = -1;
+        rt_state.curStudioAdditive = false;
 #endif
 
 		if( FBitSet( g_nFaceFlags, STUDIO_NF_MASKED ))

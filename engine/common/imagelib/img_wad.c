@@ -142,6 +142,97 @@ void Image_SetMDLPointer( byte *p )
 	g_mdltexdata = p;
 }
 
+#if XASH_RAYTRACING
+/*
+========================
+Image_LoadAdditiveMDLTexture
+
+GoldSrc additive studio textures store opacity in RGB intensity: black adds
+nothing, while brighter texels contribute more light. RayTracedGL1 needs an
+explicit alpha channel, so convert the indexed texture to straight RGBA while
+preserving the original additive color contribution.
+========================
+*/
+static qboolean Image_LoadAdditiveMDLTexture( const byte *pixels, const byte *palette, size_t pixelCount, int width, int height )
+{
+	byte	*out, *visited;
+	int	*queue;
+	int	head = 0, tail = 0;
+	size_t	i;
+
+	image.type = PF_RGBA_32;
+	image.depth = 1;
+	image.size = pixelCount * 4;
+	image.flags |= IMAGE_HAS_COLOR|IMAGE_HAS_ALPHA;
+	image.rgba = out = Mem_Malloc( host.imagepool, image.size );
+
+	for( i = 0; i < pixelCount; i++ )
+	{
+		const byte *src = palette + pixels[i] * 3;
+		byte *dst = out + i * 4;
+		byte alpha = Q_max( src[0], Q_max( src[1], src[2] ));
+
+		if( alpha > 0 )
+		{
+			// Straight-alpha color. Multiplying it by alpha reconstructs the
+			// source RGB that classic additive blending would have contributed.
+			dst[0] = (byte)(( src[0] * 255 + alpha / 2 ) / alpha );
+			dst[1] = (byte)(( src[1] * 255 + alpha / 2 ) / alpha );
+			dst[2] = (byte)(( src[2] * 255 + alpha / 2 ) / alpha );
+		}
+		else
+		{
+			dst[0] = dst[1] = dst[2] = 0;
+		}
+
+		dst[3] = alpha;
+	}
+
+	// Propagate edge color through transparent texels without changing their
+	// alpha. This prevents linear filtering and mip generation from mixing a
+	// black RGB fringe into otherwise transparent additive backgrounds.
+	visited = Mem_Calloc( host.imagepool, pixelCount );
+	queue = Mem_Malloc( host.imagepool, pixelCount * sizeof( *queue ));
+
+	for( i = 0; i < pixelCount; i++ )
+	{
+		if( out[i * 4 + 3] > 0 )
+		{
+			visited[i] = true;
+			queue[tail++] = (int)i;
+		}
+	}
+
+	while( head < tail )
+	{
+		const int current = queue[head++];
+		const int x = current % width;
+		const int y = current / width;
+		const int neighbors[4] = { current - 1, current + 1, current - width, current + width };
+		const qboolean valid[4] = { x > 0, x + 1 < width, y > 0, y + 1 < height };
+		int j;
+
+		for( j = 0; j < 4; j++ )
+		{
+			const int neighbor = neighbors[j];
+
+			if( !valid[j] || visited[neighbor] )
+				continue;
+
+			out[neighbor * 4 + 0] = out[current * 4 + 0];
+			out[neighbor * 4 + 1] = out[current * 4 + 1];
+			out[neighbor * 4 + 2] = out[current * 4 + 2];
+			visited[neighbor] = true;
+			queue[tail++] = neighbor;
+		}
+	}
+
+	Mem_Free( queue );
+	Mem_Free( visited );
+	return true;
+}
+#endif
+
 /*
 ============
 Image_LoadMDL
@@ -179,6 +270,12 @@ qboolean Image_LoadMDL( const char *name, const byte *buffer, fs_offset_t filesi
 			Image_GetPaletteLMP( pal, LUMP_MASKED );
 			image.flags |= IMAGE_HAS_ALPHA|IMAGE_ONEBIT_ALPHA;
 		}
+#if XASH_RAYTRACING
+		else if( FBitSet( flags, STUDIO_NF_ADDITIVE ))
+		{
+			return Image_LoadAdditiveMDLTexture( fin, fin + pixels, pixels, image.width, image.height );
+		}
+#endif
 		else Image_GetPaletteLMP( fin + pixels, LUMP_NORMAL );
 	}
 	else

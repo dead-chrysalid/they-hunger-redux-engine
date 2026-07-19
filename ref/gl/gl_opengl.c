@@ -1221,6 +1221,7 @@ qboolean R_Init( void )
                 .curStudioMesh        = -1,
                 .curStudioWeaponModel = 0,
                 .curStudioGlend       = -1,
+                .curStudioAdditive    = false,
 
                 .curBrushSurface           = -1,
                 .curBrushSurfaceIsWater    = false,
@@ -2532,6 +2533,7 @@ static void TryBeginBatch( RgUtilImScratchTopology glbegin_topology )
         qboolean ishologram     = ( RI.currententity->curstate.renderfx == kRenderFxHologram );
         qboolean isfadeout      = ( RI.currententity->curstate.rendermode == kRenderTransTexture ||
                                RI.currententity->curstate.rendermode == kRenderTransColor );
+        qboolean isadditive     = rt_state.curStudioAdditive;
 
 		// look HL1RT_HACKS in hlsdk
         qboolean hasinvis = ( RI.currententity->curstate.renderfx == 63 );
@@ -2572,13 +2574,15 @@ static void TryBeginBatch( RgUtilImScratchTopology glbegin_topology )
             .flags =
                 ( hasinvis ? RG_MESH_PRIMITIVE_GLASS | RG_MESH_PRIMITIVE_IGNORE_REFRACT_AFTER
                            : 0 ) |
+                ( isadditive ? RG_MESH_PRIMITIVE_TRANSLUCENT : 0 ) |
                 ( rt_alphatest ? RG_MESH_PRIMITIVE_ALPHA_TESTED : 0 ) |
                 ( isviewmodel ? RG_MESH_PRIMITIVE_FIRST_PERSON
                               : ( isplayerviewer ? RG_MESH_PRIMITIVE_FIRST_PERSON_VIEWER : 0 ) ),
             .pTextureName = rt_state.curTexture2DName,
             .textureFrame = 0,
             .color        = rgUtilPackColorByte4D( 255, 255, 255, ishologram ? alpha : 255 ),
-            .emissive     = ishologram ? RT_CVAR_TO_FLOAT( rt_emis_hologram ) : 0.0f,
+            .emissive     = isadditive ? RT_CVAR_TO_FLOAT( rt_emis_additive_dflt )
+                                      : ( ishologram ? RT_CVAR_TO_FLOAT( rt_emis_hologram ) : 0.0f ),
             .pEditorInfo  = NULL,
         };
 

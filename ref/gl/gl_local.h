@@ -787,6 +787,7 @@ typedef struct rt_state_s
     int curStudioMesh;
     int curStudioWeaponModel;
     int curStudioGlend;
+    qboolean curStudioAdditive;
 
     int      curBrushSurface;
     qboolean curBrushSurfaceIsWater;
