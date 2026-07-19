@@ -1,0 +1,17 @@
+diff --git a/Source/Shaders/RsWorld.frag b/Source/Shaders/RsWorld.frag
+--- a/Source/Shaders/RsWorld.frag
++++ b/Source/Shaders/RsWorld.frag
+@@ -98,7 +98,10 @@ void main()
+         }
+         ldrEmis *= rasterizerFragInfo.emissiveMult;
+-
+-        outScreenEmission = ldrEmis;
++
++        // The emission attachment is additively blended, so it must carry the
++        // same coverage as the translucent color attachment. Otherwise fully
++        // transparent texels still bloom as opaque rectangles.
++        outScreenEmission = ldrEmis * ldrColor.a;
+     }
+-
++
+     if( alphaTest != 0 )
