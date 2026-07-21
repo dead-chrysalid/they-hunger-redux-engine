@@ -755,6 +755,7 @@ void Delta_InitFields( void )
 	char *pfile;
 	string		encodeDll, encodeFunc, token;
 	delta_info_t	*dt;
+	int		fieldIndex;
 
 	afile = FS_LoadFile( DELTA_PATH, NULL, false );
 	if( !afile ) Sys_Error( "DELTA_Load: couldn't load file %s\n", DELTA_PATH );
@@ -788,6 +789,17 @@ void Delta_InitFields( void )
 	}
 
 	Mem_Free( afile );
+
+	// env_beam overloads animtime with its signed texture scroll rate.
+	// Stock delta.lst files declare this field unsigned, which clamps
+	// negative scroll rates to zero before they reach the renderer.
+	dt = Delta_FindStruct( "custom_entity_state_t" );
+	if( dt && dt->bInitialized )
+	{
+		fieldIndex = Delta_FindField( dt->pFields, "animtime" );
+		if( fieldIndex >= 0 )
+			SetBits( dt->pFields[fieldIndex].flags, DT_SIGNED );
+	}
 }
 
 void Delta_Init( void )

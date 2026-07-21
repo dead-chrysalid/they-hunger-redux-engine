@@ -1199,7 +1199,10 @@ static void R_BeamSetup( BEAM *pbeam, vec3_t start, vec3_t end, int modelIndex, 
 	VectorCopy( end, pbeam->target );
 	VectorSubtract( end, start, pbeam->delta );
 
-	pbeam->freq = speed * gpGlobals->time;
+	// Beam drawing applies the scroll speed when building texture coordinates.
+	// Start from time alone so signed rates retain their direction and are
+	// not multiplied by themselves.
+	pbeam->freq = gpGlobals->oldtime;
 	pbeam->die = life + gpGlobals->time;
 	pbeam->amplitude = amplitude;
 	pbeam->brightness = brightness;
@@ -1228,6 +1231,7 @@ void R_BeamDrawCustomEntity( cl_entity_t *ent )
 	BEAM	beam;
 	float	amp = ent->curstate.body / 100.0f;
 	float	blend = CL_FxBlend( ent ) / 255.0f;
+	float	scrollSpeed = ent->curstate.animtime * 2.0f;
 	float	r, g, b;
 	int	beamFlags;
 
@@ -1235,7 +1239,8 @@ void R_BeamDrawCustomEntity( cl_entity_t *ent )
 	g = ent->curstate.rendercolor.g / 255.0f;
 	b = ent->curstate.rendercolor.b / 255.0f;
 
-	R_BeamSetup( &beam, ent->origin, ent->angles, ent->curstate.modelindex, 0, ent->curstate.scale, amp, blend, ent->curstate.animtime );
+	// Persistent rain and blood beams use texture scroll as their visible motion.
+	R_BeamSetup( &beam, ent->origin, ent->angles, ent->curstate.modelindex, 0, ent->curstate.scale, amp, blend, scrollSpeed );
 	R_BeamSetAttributes( &beam, r, g, b, ent->curstate.framerate, ent->curstate.frame );
 	beam.pFollowModel = NULL;
 
