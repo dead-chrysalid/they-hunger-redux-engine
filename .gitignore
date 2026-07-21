@@ -339,3 +339,6 @@ enc_temp_folder/
 
 # Local build scratch logs
 /msbuild*.log
+
+tools/*
+*.png
