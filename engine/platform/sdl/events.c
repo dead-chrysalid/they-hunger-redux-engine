@@ -24,6 +24,7 @@ GNU General Public License for more details.
 #include "events.h"
 #include "sound.h"
 #include "vid_common.h"
+#include "ref_common.h"
 
 #if ! SDL_VERSION_ATLEAST( 2, 0, 0 )
 #define SDL_SCANCODE_A SDLK_a
@@ -105,6 +106,121 @@ static qboolean SDLash_IsInstanceIDAGameController( SDL_JoystickID joyId )
 	return false;
 #endif
 }
+
+#if SDL_VERSION_ATLEAST( 2, 0, 0 )
+static int SDLash_RTEditorModifiers( SDL_Keymod mods )
+{
+	int result = 0;
+	if( mods & KMOD_CTRL ) result |= BIT( 0 );
+	if( mods & KMOD_SHIFT ) result |= BIT( 1 );
+	if( mods & KMOD_ALT ) result |= BIT( 2 );
+	if( mods & KMOD_GUI ) result |= BIT( 3 );
+	return result;
+}
+
+static int SDLash_RTEditorMouseButton( Uint8 button )
+{
+	switch( button )
+	{
+	case SDL_BUTTON_LEFT: return 0;
+	case SDL_BUTTON_RIGHT: return 1;
+	case SDL_BUTTON_MIDDLE: return 2;
+	case SDL_BUTTON_X1: return 3;
+	case SDL_BUTTON_X2: return 4;
+	default: return -1;
+	}
+}
+
+static qboolean SDLash_RTEditorEvent( const SDL_Event *event )
+{
+	ref_editor_status_t status;
+	ref_editor_event_t input;
+	R_RTEditorGetStatus( &status );
+
+	if( event->type == SDL_KEYDOWN && event->key.keysym.scancode == SDL_SCANCODE_F10 &&
+		!event->key.repeat )
+	{
+		R_RTEditorSetEnabled( !status.active );
+		return true;
+	}
+	if( event->type == SDL_KEYUP && event->key.keysym.scancode == SDL_SCANCODE_F10 )
+		return true;
+	if( !status.active )
+		return false;
+
+	memset( &input, 0, sizeof( input ));
+	switch( event->type )
+	{
+	case SDL_KEYDOWN:
+	case SDL_KEYUP:
+		input.type = REF_EDITOR_EVENT_KEY;
+		input.key = event->key.keysym.scancode;
+		input.down = event->type == SDL_KEYDOWN;
+		input.modifiers = SDLash_RTEditorModifiers( event->key.keysym.mod );
+		break;
+	case SDL_TEXTINPUT:
+		input.type = REF_EDITOR_EVENT_TEXT;
+		Q_strncpy( input.text, event->text.text, sizeof( input.text ));
+		break;
+	case SDL_MOUSEMOTION:
+		input.type = REF_EDITOR_EVENT_MOUSE_MOVE;
+		input.x = (float)event->motion.x;
+		input.y = (float)event->motion.y;
+		input.dx = (float)event->motion.xrel;
+		input.dy = (float)event->motion.yrel;
+		break;
+	case SDL_MOUSEBUTTONDOWN:
+	case SDL_MOUSEBUTTONUP:
+		input.type = REF_EDITOR_EVENT_MOUSE_BUTTON;
+		input.button = SDLash_RTEditorMouseButton( event->button.button );
+		input.down = event->type == SDL_MOUSEBUTTONDOWN;
+		if( input.button < 0 ) return false;
+		break;
+	case SDL_MOUSEWHEEL:
+		input.type = REF_EDITOR_EVENT_MOUSE_WHEEL;
+		input.wheel = (float)event->wheel.y;
+		break;
+	default:
+		return false;
+	}
+
+	return R_RTEditorHandleInput( &input );
+}
+
+static void SDLash_RTEditorUpdateCursor( void )
+{
+	static qboolean wasActive = false;
+	static qboolean hadCursor = false;
+	ref_editor_status_t status;
+	R_RTEditorGetStatus( &status );
+
+	if( status.active )
+	{
+		if( !wasActive || hadCursor != status.wantsCursor )
+		{
+			Platform_SetCursorType( status.wantsCursor ? dc_arrow : dc_none );
+			if( status.wantsCursor ) IN_DeactivateMouse();
+			else IN_ActivateMouse();
+		}
+	}
+	else if( wasActive )
+	{
+		if( cls.key_dest == key_game )
+		{
+			Platform_SetCursorType( dc_none );
+			IN_ActivateMouse();
+		}
+		else
+		{
+			Platform_SetCursorType( dc_arrow );
+			IN_DeactivateMouse();
+		}
+	}
+
+	wasActive = status.active;
+	hadCursor = status.wantsCursor;
+}
+#endif
 
 /*
 =============
@@ -424,6 +540,11 @@ SDLash_EventFilter
 */
 static void SDLash_EventFilter( SDL_Event *event )
 {
+#if SDL_VERSION_ATLEAST( 2, 0, 0 )
+	if( SDLash_RTEditorEvent( event ))
+		return;
+#endif
+
 	switch ( event->type )
 	{
 	/* Mouse events */
@@ -649,8 +770,18 @@ void Platform_RunEvents( void )
 {
 	SDL_Event event;
 
+	R_RTEditorValidateState();
+#if SDL_VERSION_ATLEAST( 2, 0, 0 )
+	SDLash_RTEditorUpdateCursor();
+#endif
+
 	while( !host.crashed && !host.shutdown_issued && SDL_PollEvent( &event ) )
+	{
 		SDLash_EventFilter( &event );
+	#if SDL_VERSION_ATLEAST( 2, 0, 0 )
+		SDLash_RTEditorUpdateCursor();
+	#endif
+	}
 }
 
 void* Platform_GetNativeObject( const char *name )

@@ -1205,6 +1205,8 @@ qboolean R_Init( void )
             gEngfuncs.Host_Error( "RayTracedGL1 init error: %s", rgUtilGetResultDescription( r ) );
         }
 
+        RT_EditorInit();
+
         {
             const rt_state_t nullstate = {
                 .curTexture2DName       = NULL,
@@ -1274,6 +1276,7 @@ void R_Shutdown( void )
 
 	if( rg_instance )
 	{
+		RT_EditorShutdown();
 		rgDestroyInstance( rg_instance );
 	}
 }

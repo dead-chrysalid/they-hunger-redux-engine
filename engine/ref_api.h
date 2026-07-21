@@ -32,7 +32,9 @@ GNU General Public License for more details.
 // RefAPI changelog:
 // 1. Initial release
 // 2. FS functions are removed, instead we have full fs_api_t
-#define REF_API_VERSION 3
+// 3. Renderer-specific extensions used by the ray-tracing backend.
+// 4. Developer live-editor input and status bridge.
+#define REF_API_VERSION 4
 
 
 #define TF_SKY		(TF_SKYSIDE|TF_NOMIPMAP)
@@ -437,6 +439,44 @@ typedef struct ref_api_s
 
 struct mip_s;
 
+typedef enum ref_editor_event_type_e
+{
+	REF_EDITOR_EVENT_NONE = 0,
+	REF_EDITOR_EVENT_KEY,
+	REF_EDITOR_EVENT_TEXT,
+	REF_EDITOR_EVENT_MOUSE_MOVE,
+	REF_EDITOR_EVENT_MOUSE_BUTTON,
+	REF_EDITOR_EVENT_MOUSE_WHEEL,
+} ref_editor_event_type_t;
+
+typedef struct ref_editor_event_s
+{
+	ref_editor_event_type_t type;
+	int key;
+	int down;
+	int button;
+	int modifiers;
+	float x;
+	float y;
+	float dx;
+	float dy;
+	float wheel;
+	char text[32];
+} ref_editor_event_t;
+
+typedef struct ref_editor_status_s
+{
+	qboolean available;
+	qboolean active;
+	qboolean workspaceOpen;
+	qboolean wantsInput;
+	qboolean wantsCursor;
+	qboolean hasUnsavedChanges;
+	unsigned int mapSerial;
+	char mapName[64];
+	char message[256];
+} ref_editor_status_t;
+
 // render callbacks
 typedef struct ref_interface_s
 {
@@ -619,6 +659,11 @@ typedef struct ref_interface_s
 	void	(*VGUI_DrawQuad)( const vpoint_t *ul, const vpoint_t *lr );
 	void	(*VGUI_GetTextureSizes)( int *width, int *height );
 	int		(*VGUI_GenerateTexture)( void );
+
+	// Developer-only RT live editor. Non-RT renderers leave these callbacks null.
+	qboolean (*RT_EditorSetEnabled)( qboolean enabled );
+	qboolean (*RT_EditorHandleInput)( const ref_editor_event_t *event );
+	void (*RT_EditorGetStatus)( ref_editor_status_t *status );
 } ref_interface_t;
 
 typedef int (*REFAPI)( int version, ref_interface_t *pFunctionTable, ref_api_t* engfuncs, ref_globals_t *pGlobals );

@@ -800,6 +800,8 @@ typedef struct rt_state_s
 extern rt_state_t rt_state;
 
 void RT_OnBeforeDrawFrame( void );
+void RT_EditorInit( void );
+void RT_EditorShutdown( void );
 void RT_ParseStaticLightEntities( void );
 void RT_UploadAllLights( void );
 void RT_TryAddParticleLight( const cl_entity_t* e );
