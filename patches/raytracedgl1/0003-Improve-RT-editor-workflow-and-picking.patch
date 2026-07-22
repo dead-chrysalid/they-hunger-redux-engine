@@ -1,0 +1,1758 @@
+From 5d63396a653306c6474d2a271e63b0ecfa955a6c Mon Sep 17 00:00:00 2001
+From: John Doe <johndoe@example.com>
+Date: Wed, 22 Jul 2026 15:41:47 +0200
+Subject: [PATCH] Improve RT editor workflow and picking
+
+---
+ CMakeLists.txt                 |   7 +
+ Source/LiveEditor.cpp          | 840 +++++++++++++++++++++++++++------
+ Source/LiveEditor.h            |  30 +-
+ Source/LiveEditorLogic.h       | 178 +++++++
+ Source/Scene.cpp               |   1 +
+ Source/Scene.h                 |   1 +
+ Tests/LiveEditorLogicTests.cpp |  95 ++++
+ 7 files changed, 1011 insertions(+), 141 deletions(-)
+ create mode 100644 Source/LiveEditorLogic.h
+ create mode 100644 Tests/LiveEditorLogicTests.cpp
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 97c88f9..ef22d20 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -326,6 +326,13 @@ if (RG_WITH_EDITOR_TESTS)
+         target_compile_options(RtglEditorGltfParserTests PRIVATE /UNDEBUG)
+     endif()
+     add_test(NAME RtglEditorGltfParserTests COMMAND RtglEditorGltfParserTests)
++    add_executable(RtglLiveEditorLogicTests Tests/LiveEditorLogicTests.cpp)
++    target_include_directories(RtglLiveEditorLogicTests PRIVATE Source Include)
++    target_compile_definitions(RtglLiveEditorLogicTests PRIVATE NOMINMAX)
++    if (MSVC)
++        target_compile_options(RtglLiveEditorLogicTests PRIVATE /UNDEBUG)
++    endif()
++    add_test(NAME RtglLiveEditorLogicTests COMMAND RtglLiveEditorLogicTests)
+ endif()
+ 
+ # VS hot-reload - disabled because of glaze
+diff --git a/Source/LiveEditor.cpp b/Source/LiveEditor.cpp
+index ed66097..6d8a8b8 100644
+--- a/Source/LiveEditor.cpp
++++ b/Source/LiveEditor.cpp
+@@ -145,6 +145,12 @@ RgLightExtraInfo& LightExtra( RTGL1::GenericLight& light )
+     return std::visit( []( auto& value ) -> RgLightExtraInfo& { return value.extra; }, light );
+ }
+ 
++const RgLightExtraInfo& LightExtra( const RTGL1::GenericLight& light )
++{
++    return std::visit(
++        []( const auto& value ) -> const RgLightExtraInfo& { return value.extra; }, light );
++}
++
+ const char* LightType( const RTGL1::GenericLight& light )
+ {
+     return std::visit(
+@@ -169,7 +175,8 @@ RTGL1::GenericLight MakeLight( int type,
+                                RgFloat3D direction,
+                                RgColor4DPacked32 color,
+                                float intensity,
+-                               RgLightExtraInfo extra )
++                               RgLightExtraInfo extra,
++                               float sourceRadius = 0.05f )
+ {
+     if( type == 2 )
+     {
+@@ -193,7 +200,7 @@ RTGL1::GenericLight MakeLight( int type,
+             .intensity = intensity,
+             .position = position,
+             .direction = direction,
+-            .radius = 0.05f,
++            .radius = sourceRadius,
+             .angleOuter = 0.7853982f,
+             .angleInner = 0.0f,
+         };
+@@ -205,7 +212,7 @@ RTGL1::GenericLight MakeLight( int type,
+         .color = color,
+         .intensity = intensity,
+         .position = position,
+-        .radius = 0.05f,
++        .radius = sourceRadius,
+     };
+ }
+ 
+@@ -348,6 +355,120 @@ RgFloat3D Cross( const RgFloat3D& a, const RgFloat3D& b )
+              a.data[ 0 ] * b.data[ 1 ] - a.data[ 1 ] * b.data[ 0 ] };
+ }
+ 
++float Distance( const RgFloat3D& a, const RgFloat3D& b )
++{
++    const float x = a.data[ 0 ] - b.data[ 0 ];
++    const float y = a.data[ 1 ] - b.data[ 1 ];
++    const float z = a.data[ 2 ] - b.data[ 2 ];
++    return std::sqrt( x * x + y * y + z * z );
++}
++
++struct ProjectedLightGlyph
++{
++    ImVec2 screen{};
++    float cameraDistance{};
++    float scale{ 1.0f };
++    float hitRadius{ 10.0f };
++    bool directional{};
++};
++
++bool ProjectLightGlyph( const RgDrawFrameInfo& drawInfo,
++                        const ImVec2& displaySize,
++                        const RgFloat3D& camera,
++                        const RTGL1::GenericLight& light,
++                        const RgFloat3D& nodePosition,
++                        ProjectedLightGlyph& result )
++{
++    result.directional = std::holds_alternative< RgDirectionalLightUploadInfo >( light );
++    RgFloat3D point = LightPosition( light, nodePosition );
++    if( result.directional )
++    {
++        const RgFloat3D direction = LightDirection( light );
++        point = { camera.data[ 0 ] - direction.data[ 0 ] * 128.0f,
++                  camera.data[ 1 ] - direction.data[ 1 ] * 128.0f,
++                  camera.data[ 2 ] - direction.data[ 2 ] * 128.0f };
++    }
++    if( !Project( drawInfo.view,
++                  drawInfo.fovYRadians,
++                  displaySize.x,
++                  displaySize.y,
++                  point,
++                  result.screen ) )
++    {
++        return false;
++    }
++    result.cameraDistance = Distance( point, camera );
++    result.scale = RTGL1::live_editor_logic::GlyphScale( result.cameraDistance );
++    result.hitRadius = ( result.directional ? 14.0f : 10.0f ) * result.scale;
++    return true;
++}
++
++void DrawSunGlyph( ImDrawList* draw,
++                   const ImVec2& center,
++                   float scale,
++                   ImU32 lightColor,
++                   bool selected )
++{
++    constexpr float TWO_PI = 6.28318530718f;
++    const ImU32 black = IM_COL32( 0, 0, 0, 255 );
++    draw->AddCircleFilled( center, 5.0f * scale, lightColor, 20 );
++    draw->AddCircle( center, 7.0f * scale, black, 20, 2.0f );
++    for( int i = 0; i < 8; i++ )
++    {
++        const float angle = TWO_PI * static_cast< float >( i ) / 8.0f;
++        const ImVec2 inner{ center.x + std::cos( angle ) * 8.5f * scale,
++                           center.y + std::sin( angle ) * 8.5f * scale };
++        const ImVec2 outer{ center.x + std::cos( angle ) * 13.0f * scale,
++                           center.y + std::sin( angle ) * 13.0f * scale };
++        draw->AddLine( inner, outer, black, 3.5f );
++        draw->AddLine( inner, outer, lightColor, 1.5f );
++    }
++    if( selected )
++    {
++        draw->AddCircle( center, 15.5f * scale, IM_COL32( 255, 255, 255, 255 ), 24, 2.0f );
++    }
++}
++
++void DrawProjectedRing( ImDrawList* draw,
++                        const RgDrawFrameInfo& drawInfo,
++                        const ImVec2& displaySize,
++                        const RgFloat3D& center,
++                        const RgFloat3D& axisA,
++                        const RgFloat3D& axisB,
++                        float radius,
++                        ImU32 color,
++                        float thickness )
++{
++    constexpr size_t SEGMENT_COUNT = 32;
++    constexpr float TWO_PI = 6.28318530718f;
++    std::array< ImVec2, SEGMENT_COUNT > ring{};
++    std::array< bool, SEGMENT_COUNT > visible{};
++    for( size_t i = 0; i < SEGMENT_COUNT; i++ )
++    {
++        const float radians = TWO_PI * static_cast< float >( i ) /
++                              static_cast< float >( SEGMENT_COUNT );
++        const float x = std::cos( radians ) * radius;
++        const float y = std::sin( radians ) * radius;
++        const RgFloat3D point{ center.data[ 0 ] + axisA.data[ 0 ] * x + axisB.data[ 0 ] * y,
++                              center.data[ 1 ] + axisA.data[ 1 ] * x + axisB.data[ 1 ] * y,
++                              center.data[ 2 ] + axisA.data[ 2 ] * x + axisB.data[ 2 ] * y };
++        visible[ i ] = Project( drawInfo.view,
++                                drawInfo.fovYRadians,
++                                displaySize.x,
++                                displaySize.y,
++                                point,
++                                ring[ i ] );
++    }
++    for( size_t i = 0; i < SEGMENT_COUNT; i++ )
++    {
++        const size_t next = ( i + 1 ) % SEGMENT_COUNT;
++        if( visible[ i ] && visible[ next ] )
++        {
++            draw->AddLine( ring[ i ], ring[ next ], color, thickness );
++        }
++    }
++}
++
+ void DrawProjectedSpotCone( ImDrawList* draw,
+                             const RgDrawFrameInfo& drawInfo,
+                             const ImVec2& displaySize,
+@@ -562,18 +683,31 @@ void RTGL1::LiveEditor::SetEnabled( bool value,
+         EndLightAction( SerializeLights( lights ) != SerializeLights( lightActionStart ), scene );
+     }
+     enabled = value;
+-    workspaceOpen = requestPick = false;
++    requestPick = false;
+     selectedLight = -1;
+     selectedSurface = {};
+-    statusMessage = enabled ? "RT editor flight mode" : "RT editor disabled";
++    keyDown.fill( false );
+     scene.SetEditorCaptureEnabled( enabled );
+     if( enabled )
+     {
++        mode.ResetToEdit();
++        workspaceOpen = true;
++        activeTab = WorkspaceTab::Lights;
++        requestedTab = WorkspaceTab::None;
++        defaultEmitterRadius = live_editor_logic::DefaultEmitterRadius(
++            sceneImportExport.GetWorldScale() );
+         lightsSeeded = false;
++        normalizeVolumetricOnNextFrame = true;
++        statusMessage = "RT editor edit mode";
+         sceneImportExport.RequestReimport();
+     }
+     else
+     {
++        workspaceOpen = false;
++        mode.ResetToEdit();
++        lightClipboard.reset();
++        normalizeVolumetricOnNextFrame = false;
++        statusMessage = "RT editor disabled";
+         scene.SetEditorLights( std::nullopt );
+     }
+ }
+@@ -589,61 +723,86 @@ bool RTGL1::LiveEditor::SubmitInput( const RgEditorInputEvent& event, Scene& sce
+ 
+     if( event.type == RG_EDITOR_INPUT_KEY )
+     {
+-        if( event.down && event.key == 43 )
++        bool wasDown = false;
++        if( event.key >= 0 && event.key < static_cast< int >( keyDown.size() ) )
+         {
+-            workspaceOpen = true;
+-            requestedTab = WorkspaceTab::None;
+-            statusMessage = "Editor workspace";
+-            return true;
++            wasDown = keyDown[ event.key ];
++            keyDown[ event.key ] = event.down != 0;
+         }
+-        if( event.down && event.key == 41 )
++        const bool pressed = event.down && !wasDown;
++
++        if( live_editor_logic::IsShiftScancode( event.key ) )
+         {
+-            if( lightAction )
++            mode.SetShift( event.key, event.down != 0 );
++            workspaceOpen = mode.IsEditing();
++            requestPick = false;
++            if( ImGuiKey key = ToImGuiKey( event.key ); key != ImGuiKey_None )
+             {
+-                EndLightAction( SerializeLights( lights ) != SerializeLights( lightActionStart ),
+-                                scene );
++                io.AddKeyEvent( key, event.down != 0 );
+             }
+-            workspaceOpen = false;
+-            selectedLight = -1;
+-            selectedSurface = {};
+-            statusMessage = "RT editor flight mode";
++            io.AddKeyEvent( ImGuiMod_Shift, mode.leftShift || mode.rightShift );
++            statusMessage = workspaceOpen ? "RT editor edit mode"
++                                          : "RT editor temporary flight mode";
++            // Let Xash update its movement key state for both press and release.
++            return false;
++        }
++        if( pressed && event.key == 43 )
++        {
++            mode.Toggle();
++            workspaceOpen = mode.IsEditing();
++            requestPick = false;
++            requestedTab = WorkspaceTab::None;
++            statusMessage = workspaceOpen ? "RT editor edit mode" : "RT editor flight mode";
+             return true;
+         }
+-        if( ImGuiKey key = ToImGuiKey( event.key ); key != ImGuiKey_None )
++        if( event.key == 43 )
+         {
+-            io.AddKeyEvent( key, event.down != 0 );
++            return true;
++        }
++        if( pressed && event.key == 41 && !workspaceOpen )
++        {
++            return true;
++        }
++        if( workspaceOpen )
++        {
++            if( ImGuiKey key = ToImGuiKey( event.key ); key != ImGuiKey_None )
++            {
++                io.AddKeyEvent( key, event.down != 0 );
++            }
++            io.AddKeyEvent( ImGuiMod_Ctrl, ( event.modifiers & 1 ) != 0 );
++            io.AddKeyEvent( ImGuiMod_Shift, ( event.modifiers & 2 ) != 0 );
++            io.AddKeyEvent( ImGuiMod_Alt, ( event.modifiers & 4 ) != 0 );
++            io.AddKeyEvent( ImGuiMod_Super, ( event.modifiers & 8 ) != 0 );
+         }
+-        io.AddKeyEvent( ImGuiMod_Ctrl, ( event.modifiers & 1 ) != 0 );
+-        io.AddKeyEvent( ImGuiMod_Shift, ( event.modifiers & 2 ) != 0 );
+-        io.AddKeyEvent( ImGuiMod_Alt, ( event.modifiers & 4 ) != 0 );
+-        io.AddKeyEvent( ImGuiMod_Super, ( event.modifiers & 8 ) != 0 );
+     }
+     else if( event.type == RG_EDITOR_INPUT_TEXT )
+     {
+-        io.AddInputCharactersUTF8( event.text );
++        if( workspaceOpen ) io.AddInputCharactersUTF8( event.text );
+     }
+     else if( event.type == RG_EDITOR_INPUT_MOUSE_MOVE )
+     {
+         mouseX = event.x;
+         mouseY = event.y;
+-        io.AddMousePosEvent( event.x, event.y );
++        if( workspaceOpen ) io.AddMousePosEvent( event.x, event.y );
+     }
+     else if( event.type == RG_EDITOR_INPUT_MOUSE_BUTTON )
+     {
+-        if( event.button >= 0 && event.button < 5 )
++        if( workspaceOpen && event.button >= 0 && event.button < 5 )
+         {
+             io.AddMouseButtonEvent( event.button, event.down != 0 );
+         }
+-        if( !workspaceOpen && event.button == 0 && event.down )
++        if( workspaceOpen && event.button == 0 && event.down )
+         {
+             requestPick = true;
+             scene.RequestEditorDynamicCapture();
+-            return true;
+         }
++        // Editor clicks never reach gameplay, including in flight mode.
++        return true;
+     }
+     else if( event.type == RG_EDITOR_INPUT_MOUSE_WHEEL )
+     {
+-        io.AddMouseWheelEvent( 0.0f, event.wheel );
++        if( workspaceOpen ) io.AddMouseWheelEvent( 0.0f, event.wheel );
++        return true;
+     }
+     return workspaceOpen;
+ }
+@@ -674,13 +833,17 @@ void RTGL1::LiveEditor::OnMap( std::string_view mapName,
+     }
+     currentMap = mapName;
+     mapSerial++;
+-    workspaceOpen = requestPick = false;
++    mode.ResetToEdit();
++    workspaceOpen = true;
++    requestPick = false;
++    keyDown.fill( false );
+     selectedLight = -1;
+     selectedSurface = {};
+     lights.clear();
+     lightUndo.clear();
+     lightRedo.clear();
+     lightsSeeded = false;
++    normalizeVolumetricOnNextFrame = true;
+     lightIdCounter = 1;
+     selectedTexture.clear();
+     textureEdit = {};
+@@ -689,6 +852,8 @@ void RTGL1::LiveEditor::OnMap( std::string_view mapName,
+     sceneEdit.sceneName = currentMap;
+     sceneMeta.SetLiveOverride( currentMap, sceneEdit );
+     textureMeta.ClearLiveOverrides();
++    defaultEmitterRadius = live_editor_logic::DefaultEmitterRadius(
++        sceneImportExport.GetWorldScale() );
+ 
+     scenesDocument = std::make_unique< LiveEditorDocument >( sceneMeta.GetPath(), backupFolder );
+     globalTexturesDocument =
+@@ -870,6 +1035,7 @@ void RTGL1::LiveEditor::PollExternalChanges( SceneImportExport& sceneImportExpor
+         lightUndo.clear();
+         lightRedo.clear();
+         lightsSeeded = false;
++        normalizeVolumetricOnNextFrame = true;
+         ReadGltfLayout();
+         const bool loadedStoredLights = LoadStoredLights();
+         needsGltfMirror = loadedStoredLights && !gltfHasEditorPunctualMirror;
+@@ -916,6 +1082,7 @@ void RTGL1::LiveEditor::DiscardConflictsAndReload( SceneImportExport& sceneImpor
+     lightUndo.clear();
+     lightRedo.clear();
+     lightsSeeded = false;
++    normalizeVolumetricOnNextFrame = true;
+     ReadGltfLayout();
+     const bool loadedStoredLights = LoadStoredLights();
+     needsGltfMirror = loadedStoredLights && !gltfHasEditorPunctualMirror;
+@@ -947,6 +1114,7 @@ void RTGL1::LiveEditor::SeedLights( const Scene& scene )
+         lights.push_back( std::move( editable ) );
+     }
+     lightsSeeded = true;
++    normalizeVolumetricOnNextFrame = true;
+ }
+ 
+ void RTGL1::LiveEditor::ApplyLights( Scene& scene ) const
+@@ -964,43 +1132,41 @@ void RTGL1::LiveEditor::ApplyLights( Scene& scene ) const
+     scene.SetEditorLights( std::move( values ) );
+ }
+ 
+-void RTGL1::LiveEditor::PickAtReticle( const RgDrawFrameInfo& drawInfo, const Scene& scene )
++void RTGL1::LiveEditor::PickAtCursor( const RgDrawFrameInfo& drawInfo, const Scene& scene )
+ {
+     requestPick = false;
++    const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+     float inv[ 16 ];
+     Matrix::Inverse( inv, drawInfo.view );
+-    RgFloat3D origin{ inv[ 12 ], inv[ 13 ], inv[ 14 ] };
+-    RgFloat3D direction = Utils::SafeNormalize( { -inv[ 8 ], -inv[ 9 ], -inv[ 10 ] },
+-                                                { 0, 0, -1 } );
++    const auto ray = live_editor_logic::MakeCursorRay( inv,
++                                                        drawInfo.fovYRadians,
++                                                        displaySize.x,
++                                                        displaySize.y,
++                                                        mouseX,
++                                                        mouseY );
++    const RgFloat3D origin = ray.origin;
++    const RgFloat3D direction = ray.direction;
+ 
+     float bestLight = std::numeric_limits< float >::max();
+     int hitLight = -1;
+     for( size_t i = 0; i < lights.size(); i++ )
+     {
+-        RgFloat3D point = LightPosition( lights[ i ].value, lights[ i ].nodePosition );
+-        if( std::holds_alternative< RgDirectionalLightUploadInfo >( lights[ i ].value ) )
+-        {
+-            RgFloat3D d = LightDirection( lights[ i ].value );
+-            point = { origin.data[ 0 ] - d.data[ 0 ] * 128.0f,
+-                      origin.data[ 1 ] - d.data[ 1 ] * 128.0f,
+-                      origin.data[ 2 ] - d.data[ 2 ] * 128.0f };
+-        }
+-        const float vx = point.data[ 0 ] - origin.data[ 0 ];
+-        const float vy = point.data[ 1 ] - origin.data[ 1 ];
+-        const float vz = point.data[ 2 ] - origin.data[ 2 ];
+-        const float along = vx * direction.data[ 0 ] + vy * direction.data[ 1 ] +
+-                            vz * direction.data[ 2 ];
+-        if( along <= 0 )
++        ProjectedLightGlyph glyph{};
++        if( !ProjectLightGlyph( drawInfo,
++                                displaySize,
++                                origin,
++                                lights[ i ].value,
++                                lights[ i ].nodePosition,
++                                glyph ) )
+         {
+             continue;
+         }
+-        const float px = vx - direction.data[ 0 ] * along;
+-        const float py = vy - direction.data[ 1 ] * along;
+-        const float pz = vz - direction.data[ 2 ] * along;
+-        const float perpendicular = std::sqrt( px * px + py * py + pz * pz );
+-        if( perpendicular < std::max( 3.0f, along * 0.015f ) && along < bestLight )
++        const float dx = glyph.screen.x - mouseX;
++        const float dy = glyph.screen.y - mouseY;
++        if( live_editor_logic::GlyphHitTest( dx, dy, glyph.hitRadius ) &&
++            glyph.cameraDistance < bestLight )
+         {
+-            bestLight = along;
++            bestLight = glyph.cameraDistance;
+             hitLight = static_cast< int >( i );
+         }
+     }
+@@ -1008,7 +1174,6 @@ void RTGL1::LiveEditor::PickAtReticle( const RgDrawFrameInfo& drawInfo, const Sc
+     {
+         selectedLight = hitLight;
+         selectedSurface = {};
+-        workspaceOpen = true;
+         requestedTab = WorkspaceTab::Lights;
+         return;
+     }
+@@ -1018,6 +1183,10 @@ void RTGL1::LiveEditor::PickAtReticle( const RgDrawFrameInfo& drawInfo, const Sc
+     auto test = [ & ]( const std::vector< Scene::PickPrimitive >& primitives ) {
+         for( const auto& primitive : primitives )
+         {
++            if( !live_editor_logic::IsPickablePrimitive( primitive.flags ) )
++            {
++                continue;
++            }
+             for( size_t i = 0; i + 2 < primitive.indices.size(); i += 3 )
+             {
+                 const uint32_t ia = primitive.indices[ i + 0 ];
+@@ -1060,7 +1229,6 @@ void RTGL1::LiveEditor::PickAtReticle( const RgDrawFrameInfo& drawInfo, const Sc
+     if( selectedSurface.valid )
+     {
+         selectedTexture = selectedSurface.textureName;
+-        workspaceOpen = true;
+         requestedTab = WorkspaceTab::Surface;
+     }
+ }
+@@ -1099,6 +1267,10 @@ void RTGL1::LiveEditor::Draw( const RgDrawFrameInfo& drawInfo,
+     else
+     {
+         SeedLights( scene );
++        if( normalizeVolumetricOnNextFrame && lightsSeeded && !lightAction )
++        {
++            NormalizeVolumetricAfterLoad( scene );
++        }
+         ApplyLights( scene );
+     }
+     if( needsGltfMirror && lightsSeeded && gltfDocument && !lightAction )
+@@ -1111,11 +1283,6 @@ void RTGL1::LiveEditor::Draw( const RgDrawFrameInfo& drawInfo,
+         if( SaveLights() )
+             statusMessage = "Migrated existing lights to standard glTF and saved";
+     }
+-    if( requestPick )
+-    {
+-        PickAtReticle( drawInfo, scene );
+-    }
+-
+     ImGuiContextScope scope( imguiContext );
+     ImGuiIO& io = ImGui::GetIO();
+     io.DisplaySize = ImVec2( static_cast< float >( displayWidth ),
+@@ -1124,7 +1291,6 @@ void RTGL1::LiveEditor::Draw( const RgDrawFrameInfo& drawInfo,
+     ImGui::NewFrame();
+     ImGuizmo::BeginFrame();
+ 
+-    DrawReticleAndGlyphs( drawInfo );
+     if( workspaceOpen )
+     {
+         DrawWorkspace( drawInfo,
+@@ -1134,6 +1300,18 @@ void RTGL1::LiveEditor::Draw( const RgDrawFrameInfo& drawInfo,
+                        textureMeta,
+                        textureManager );
+     }
++    if( requestPick )
++    {
++        if( !io.WantCaptureMouse && !ImGuizmo::IsOver() && !ImGuizmo::IsUsing() )
++        {
++            PickAtCursor( drawInfo, scene );
++        }
++        else
++        {
++            requestPick = false;
++        }
++    }
++    DrawReticleAndGlyphs( drawInfo );
+ 
+     ImGui::Render();
+     RenderImGui( frameIndex, materialCmd, textureManager, rasterizer );
+@@ -1151,7 +1329,7 @@ void RTGL1::LiveEditor::DrawWorkspace( const RgDrawFrameInfo& drawInfo,
+ {
+     ImGui::SetNextWindowSize( ImVec2( 520, 720 ), ImGuiCond_FirstUseEver );
+     ImGui::SetNextWindowPos( ImVec2( 16, 16 ), ImGuiCond_FirstUseEver );
+-    if( !ImGui::Begin( "RT Live Editor", &workspaceOpen, ImGuiWindowFlags_MenuBar ) )
++    if( !ImGui::Begin( "RT Live Editor", nullptr, ImGuiWindowFlags_MenuBar ) )
+     {
+         ImGui::End();
+         return;
+@@ -1197,6 +1375,9 @@ void RTGL1::LiveEditor::DrawWorkspace( const RgDrawFrameInfo& drawInfo,
+                                      ? ImGuiTabItemFlags_SetSelected
+                                      : ImGuiTabItemFlags_None ) )
+         {
++            activeTab = WorkspaceTab::Lights;
++            live_editor_logic::ConsumeDeferredTab(
++                requestedTab, WorkspaceTab::Lights, WorkspaceTab::None );
+             DrawLightPanel( drawInfo, scene );
+             ImGui::EndTabItem();
+         }
+@@ -1206,6 +1387,9 @@ void RTGL1::LiveEditor::DrawWorkspace( const RgDrawFrameInfo& drawInfo,
+                                      ? ImGuiTabItemFlags_SetSelected
+                                      : ImGuiTabItemFlags_None ) )
+         {
++            activeTab = WorkspaceTab::Atmosphere;
++            live_editor_logic::ConsumeDeferredTab(
++                requestedTab, WorkspaceTab::Atmosphere, WorkspaceTab::None );
+             DrawAtmospherePanel( sceneMeta );
+             ImGui::EndTabItem();
+         }
+@@ -1215,7 +1399,10 @@ void RTGL1::LiveEditor::DrawWorkspace( const RgDrawFrameInfo& drawInfo,
+                                      ? ImGuiTabItemFlags_SetSelected
+                                      : ImGuiTabItemFlags_None ) )
+         {
+-            DrawTexturePanel( textureMeta, textureManager, sceneImportExport );
++            activeTab = WorkspaceTab::Textures;
++            live_editor_logic::ConsumeDeferredTab(
++                requestedTab, WorkspaceTab::Textures, WorkspaceTab::None );
++            DrawTexturePanel( textureMeta, textureManager, sceneImportExport, scene );
+             ImGui::EndTabItem();
+         }
+         if( ImGui::BeginTabItem( "Selected surface",
+@@ -1224,14 +1411,18 @@ void RTGL1::LiveEditor::DrawWorkspace( const RgDrawFrameInfo& drawInfo,
+                                      ? ImGuiTabItemFlags_SetSelected
+                                      : ImGuiTabItemFlags_None ) )
+         {
++            activeTab = WorkspaceTab::Surface;
++            live_editor_logic::ConsumeDeferredTab(
++                requestedTab, WorkspaceTab::Surface, WorkspaceTab::None );
+             DrawMeshPanel();
+             ImGui::EndTabItem();
+         }
+         ImGui::EndTabBar();
+-        requestedTab = WorkspaceTab::None;
+     }
++    HandleHotkeys( scene, sceneImportExport, sceneMeta, textureMeta );
+     ImGui::Separator();
+-    ImGui::TextDisabled( "Escape: return to flight   Tab: open workspace   F10: exit editor" );
++    ImGui::TextDisabled( "Tab: flight/edit   Hold Shift: temporary flight   F10: exit" );
++    ImGui::TextDisabled( "R: move/rotate   Del: delete   Ctrl+C/V/D: copy/paste/duplicate   Ctrl+Z/Y: undo/redo" );
+     ImGui::End();
+ }
+ 
+@@ -1255,6 +1446,7 @@ void RTGL1::LiveEditor::EndLightAction( bool changed, Scene& scene )
+     {
+         return;
+     }
++    changed = SerializeLights( lights ) != SerializeLights( lightActionStart );
+     lightAction = false;
+     if( !changed )
+     {
+@@ -1280,22 +1472,109 @@ void RTGL1::LiveEditor::RefreshUnsavedStatus()
+                         pending( sceneTexturesDocument ) || pending( gltfDocument );
+ }
+ 
++std::string RTGL1::LiveEditor::DescribeVolumetricSource() const
++{
++    const EditableLight* marked = nullptr;
++    for( const EditableLight& light : lights )
++    {
++        if( LightExtra( light.value ).isVolumetric )
++        {
++            if( marked ) return "multiple marked lights";
++            marked = &light;
++        }
++    }
++    return marked ? marked->name : "none";
++}
++
++bool RTGL1::LiveEditor::NormalizeVolumetric( std::optional< size_t > preferred )
++{
++    if( lights.empty() ) return false;
++
++    std::vector< live_editor_logic::VolumetricCandidate > candidates;
++    candidates.reserve( lights.size() );
++    size_t markedCount = 0;
++    for( const EditableLight& light : lights )
++    {
++        const bool marked = LightExtra( light.value ).isVolumetric != 0;
++        markedCount += marked ? 1 : 0;
++        candidates.push_back( {
++            .marked = marked,
++            .directional = std::holds_alternative< RgDirectionalLightUploadInfo >( light.value ),
++            .intensity = LightIntensity( light.value ),
++        } );
++    }
++
++    std::optional< size_t > chosen;
++    if( markedCount == 1 )
++    {
++        chosen = live_editor_logic::SelectVolumetricCandidate( candidates, true, preferred );
++    }
++    else if( markedCount > 1 )
++    {
++        chosen = live_editor_logic::SelectVolumetricCandidate( candidates, true, preferred );
++    }
++    else
++    {
++        chosen = live_editor_logic::SelectVolumetricCandidate( candidates, false, preferred );
++    }
++
++    bool changed = false;
++    for( size_t i = 0; i < lights.size(); i++ )
++    {
++        RgLightExtraInfo& extra = LightExtra( lights[ i ].value );
++        extra.exists = true;
++        const bool shouldBeMarked = chosen && i == *chosen;
++        if( ( extra.isVolumetric != 0 ) != shouldBeMarked )
++        {
++            extra.isVolumetric = shouldBeMarked;
++            changed = true;
++        }
++    }
++    return changed;
++}
++
++void RTGL1::LiveEditor::ShowVolumetricChange( std::string_view previous )
++{
++    const std::string current = DescribeVolumetricSource();
++    if( previous == current ) return;
++    statusMessage = "Volumetric source changed: " + std::string( previous ) + " -> " + current;
++    if( gltfDocument && gltfDocument->IsDirty() )
++        statusMessage += " (unsaved)";
++    else
++        statusMessage += " (saved)";
++}
++
++void RTGL1::LiveEditor::NormalizeVolumetricAfterLoad( Scene& scene )
++{
++    normalizeVolumetricOnNextFrame = false;
++    const std::string previous = DescribeVolumetricSource();
++    if( !NormalizeVolumetric() ) return;
++
++    ApplyLights( scene );
++    if( gltfDocument ) gltfDocument->BeginAction();
++    if( SaveLights() ) needsGltfMirror = false;
++    ShowVolumetricChange( previous );
++}
++
+ void RTGL1::LiveEditor::UndoLights( Scene& scene )
+ {
+     if( lightUndo.empty() )
+     {
+         return;
+     }
++    const std::string previousVolumetric = DescribeVolumetricSource();
+     lightRedo.push_back( lights );
+     lights = std::move( lightUndo.back() );
+     lightUndo.pop_back();
+     selectedLight = std::min( selectedLight, static_cast< int >( lights.size() ) - 1 );
++    NormalizeVolumetric();
+     ApplyLights( scene );
+     if( gltfDocument )
+     {
+         gltfDocument->BeginAction();
+     }
+     SaveLights();
++    ShowVolumetricChange( previousVolumetric );
+ }
+ 
+ void RTGL1::LiveEditor::RedoLights( Scene& scene )
+@@ -1304,15 +1583,19 @@ void RTGL1::LiveEditor::RedoLights( Scene& scene )
+     {
+         return;
+     }
++    const std::string previousVolumetric = DescribeVolumetricSource();
+     lightUndo.push_back( lights );
+     lights = std::move( lightRedo.back() );
+     lightRedo.pop_back();
++    selectedLight = std::min( selectedLight, static_cast< int >( lights.size() ) - 1 );
++    NormalizeVolumetric();
+     ApplyLights( scene );
+     if( gltfDocument )
+     {
+         gltfDocument->BeginAction();
+     }
+     SaveLights();
++    ShowVolumetricChange( previousVolumetric );
+ }
+ 
+ uint64_t RTGL1::LiveEditor::NewLightId()
+@@ -1331,6 +1614,186 @@ uint64_t RTGL1::LiveEditor::NewLightId()
+     }
+ }
+ 
++void RTGL1::LiveEditor::DuplicateSelectedLight( Scene& scene )
++{
++    if( selectedLight < 0 || selectedLight >= static_cast< int >( lights.size() ) ) return;
++    const std::string previousVolumetric = DescribeVolumetricSource();
++    BeginLightAction();
++    EditableLight copy = lights[ selectedLight ];
++    const bool transferVolumetric = LightExtra( copy.value ).isVolumetric != 0;
++    const uint64_t id = NewLightId();
++    copy.id = std::to_string( id );
++    copy.name += " copy";
++    std::visit( [ id ]( auto& value ) { value.uniqueID = id; }, copy.value );
++    lights.push_back( std::move( copy ) );
++    selectedLight = static_cast< int >( lights.size() ) - 1;
++    NormalizeVolumetric( transferVolumetric
++                             ? std::optional< size_t >( static_cast< size_t >( selectedLight ) )
++                             : std::nullopt );
++    EndLightAction( true, scene );
++    ShowVolumetricChange( previousVolumetric );
++}
++
++void RTGL1::LiveEditor::DeleteSelectedLight( Scene& scene )
++{
++    if( selectedLight < 0 || selectedLight >= static_cast< int >( lights.size() ) ) return;
++    const std::string previousVolumetric = DescribeVolumetricSource();
++    BeginLightAction();
++    lights.erase( lights.begin() + selectedLight );
++    selectedLight = std::min( selectedLight, static_cast< int >( lights.size() ) - 1 );
++    NormalizeVolumetric();
++    EndLightAction( true, scene );
++    ShowVolumetricChange( previousVolumetric );
++}
++
++void RTGL1::LiveEditor::PasteSelectedLight( Scene& scene )
++{
++    if( !lightClipboard || selectedLight < 0 ||
++        selectedLight >= static_cast< int >( lights.size() ) )
++    {
++        return;
++    }
++
++    const std::string previousVolumetric = DescribeVolumetricSource();
++    BeginLightAction();
++    EditableLight& target = lights[ selectedLight ];
++    const uint64_t targetId = LightId( target.value );
++    const RgFloat3D targetPosition = LightPosition( target.value, target.nodePosition );
++    const RgFloat3D targetNodePosition = target.nodePosition;
++
++    EditableLight replacement = *lightClipboard;
++    replacement.id = target.id;
++    replacement.nodePosition = targetNodePosition;
++    std::visit( [ targetId ]( auto& value ) { value.uniqueID = targetId; }, replacement.value );
++    if( auto* point = std::get_if< RgSphericalLightUploadInfo >( &replacement.value ) )
++        point->position = targetPosition;
++    if( auto* spot = std::get_if< RgSpotLightUploadInfo >( &replacement.value ) )
++        spot->position = targetPosition;
++
++    const bool transferVolumetric = LightExtra( replacement.value ).isVolumetric != 0;
++    target = std::move( replacement );
++    NormalizeVolumetric( transferVolumetric
++                             ? std::optional< size_t >( static_cast< size_t >( selectedLight ) )
++                             : std::nullopt );
++    EndLightAction( true, scene );
++    ShowVolumetricChange( previousVolumetric );
++}
++
++void RTGL1::LiveEditor::UndoAtmosphere( SceneMetaManager& manager, bool redo )
++{
++    if( !scenesDocument ) return;
++    std::string error;
++    const bool changed = redo ? scenesDocument->Redo( ValidateScenes, error )
++                              : scenesDocument->Undo( ValidateScenes, error );
++    if( changed )
++    {
++        manager.ClearLiveOverrides();
++        manager.OnFileChanged( FileType::JSON, manager.GetPath() );
++        sceneEdit = manager.Access( currentMap ).value_or( SceneMeta{} );
++        sceneEdit.sceneName = currentMap;
++        manager.SetLiveOverride( currentMap, sceneEdit );
++        statusMessage = redo ? "Redid atmosphere action and saved"
++                             : "Undid atmosphere action and saved";
++    }
++    else if( !error.empty() )
++    {
++        statusMessage = error;
++    }
++}
++
++void RTGL1::LiveEditor::UndoTexture( TextureMetaManager& manager,
++                                     SceneImportExport& sceneImportExport,
++                                     bool redo )
++{
++    LiveEditorDocument* document =
++        texturePerScene ? sceneTexturesDocument.get() : globalTexturesDocument.get();
++    if( !document ) return;
++    std::string error;
++    const bool changed = redo ? document->Redo( ValidateTextures, error )
++                              : document->Undo( ValidateTextures, error );
++    if( changed )
++    {
++        manager.ClearLiveOverrides();
++        manager.RereadFromFiles( std::string_view( currentMap ) );
++        if( !selectedTexture.empty() )
++        {
++            textureEdit = manager.AccessConfig( selectedTexture, texturePerScene )
++                              .value_or( TextureMetaConfig{} );
++            textureEdit.textureName = selectedTexture;
++            textureEditPerScene = texturePerScene;
++        }
++        sceneImportExport.RequestReimport();
++        statusMessage = redo ? "Redid texture action and saved"
++                             : "Undid texture action and saved";
++    }
++    else if( !error.empty() )
++    {
++        statusMessage = error;
++    }
++}
++
++void RTGL1::LiveEditor::HandleHotkeys( Scene& scene,
++                                       SceneImportExport& sceneImportExport,
++                                       SceneMetaManager& sceneMeta,
++                                       TextureMetaManager& textureMeta )
++{
++    ImGuiIO& io = ImGui::GetIO();
++    const bool popupOpen = ImGui::IsPopupOpen( nullptr, ImGuiPopupFlags_AnyPopup );
++
++    if( ImGui::IsKeyPressed( ImGuiKey_Escape, false ) && !popupOpen &&
++        !ImGui::IsAnyItemActive() )
++    {
++        selectedLight = -1;
++        selectedSurface = {};
++        requestedTab = WorkspaceTab::None;
++        statusMessage = "Selection cleared";
++    }
++
++    if( io.WantTextInput || ImGui::IsAnyItemActive() || popupOpen || ImGuizmo::IsUsing() )
++    {
++        return;
++    }
++
++    const bool control = io.KeyCtrl;
++    if( !control && ImGui::IsKeyPressed( ImGuiKey_R, false ) && selectedLight >= 0 )
++    {
++        rotateGizmo = !rotateGizmo;
++        statusMessage = rotateGizmo ? "Rotate gizmo" : "Move gizmo";
++    }
++    if( !control && ImGui::IsKeyPressed( ImGuiKey_Delete, false ) )
++    {
++        DeleteSelectedLight( scene );
++    }
++    if( control && ImGui::IsKeyPressed( ImGuiKey_C, false ) && selectedLight >= 0 &&
++        selectedLight < static_cast< int >( lights.size() ) )
++    {
++        lightClipboard = lights[ selectedLight ];
++        statusMessage = "Copied light: " + lights[ selectedLight ].name;
++    }
++    if( control && ImGui::IsKeyPressed( ImGuiKey_V, false ) )
++    {
++        PasteSelectedLight( scene );
++    }
++    if( control && ImGui::IsKeyPressed( ImGuiKey_D, false ) )
++    {
++        DuplicateSelectedLight( scene );
++    }
++    if( control && ImGui::IsKeyPressed( ImGuiKey_Z, false ) )
++    {
++        if( activeTab == WorkspaceTab::Lights ) UndoLights( scene );
++        if( activeTab == WorkspaceTab::Atmosphere ) UndoAtmosphere( sceneMeta, false );
++        if( activeTab == WorkspaceTab::Textures )
++            UndoTexture( textureMeta, sceneImportExport, false );
++    }
++    if( control && ImGui::IsKeyPressed( ImGuiKey_Y, false ) )
++    {
++        if( activeTab == WorkspaceTab::Lights ) RedoLights( scene );
++        if( activeTab == WorkspaceTab::Atmosphere ) UndoAtmosphere( sceneMeta, true );
++        if( activeTab == WorkspaceTab::Textures )
++            UndoTexture( textureMeta, sceneImportExport, true );
++    }
++}
++
+ void RTGL1::LiveEditor::DrawLightPanel( const RgDrawFrameInfo& drawInfo, Scene& scene )
+ {
+     float inverseView[ 16 ];
+@@ -1343,6 +1806,7 @@ void RTGL1::LiveEditor::DrawLightPanel( const RgDrawFrameInfo& drawInfo, Scene&
+         { 0, 0, -1 } );
+     if( ImGui::Button( "Create point" ) )
+     {
++        const std::string previousVolumetric = DescribeVolumetricSource();
+         BeginLightAction();
+         const uint64_t id = NewLightId();
+         lights.push_back( { .id = std::to_string( id ),
+@@ -1353,14 +1817,18 @@ void RTGL1::LiveEditor::DrawLightPanel( const RgDrawFrameInfo& drawInfo, Scene&
+                                                 { 0, 0, -1 },
+                                                 0xFFFFFFFF,
+                                                 500.0f,
+-                                                { .exists = true } ),
++                                                { .exists = true },
++                                                defaultEmitterRadius ),
+                             .nodePosition = createPosition } );
+         selectedLight = static_cast< int >( lights.size() ) - 1;
++        NormalizeVolumetric( static_cast< size_t >( selectedLight ) );
+         EndLightAction( true, scene );
++        ShowVolumetricChange( previousVolumetric );
+     }
+     ImGui::SameLine();
+     if( ImGui::Button( "Create spot" ) )
+     {
++        const std::string previousVolumetric = DescribeVolumetricSource();
+         BeginLightAction();
+         const uint64_t id = NewLightId();
+         lights.push_back( { .id = std::to_string( id ),
+@@ -1369,16 +1837,20 @@ void RTGL1::LiveEditor::DrawLightPanel( const RgDrawFrameInfo& drawInfo, Scene&
+                                                  id,
+                                                  createPosition,
+                                                  createDirection,
+-                                                 0xFFFFFFFF,
++                                                0xFFFFFFFF,
+                                                 500.0f,
+-                                                { .exists = true } ),
++                                                { .exists = true },
++                                                defaultEmitterRadius ),
+                             .nodePosition = createPosition } );
+         selectedLight = static_cast< int >( lights.size() ) - 1;
++        NormalizeVolumetric( static_cast< size_t >( selectedLight ) );
+         EndLightAction( true, scene );
++        ShowVolumetricChange( previousVolumetric );
+     }
+     ImGui::SameLine();
+     if( ImGui::Button( "Create sun" ) )
+     {
++        const std::string previousVolumetric = DescribeVolumetricSource();
+         BeginLightAction();
+         const uint64_t id = NewLightId();
+         lights.push_back( { .id = std::to_string( id ),
+@@ -1392,7 +1864,9 @@ void RTGL1::LiveEditor::DrawLightPanel( const RgDrawFrameInfo& drawInfo, Scene&
+                                                 { .exists = true } ),
+                             .nodePosition = createPosition } );
+         selectedLight = static_cast< int >( lights.size() ) - 1;
++        NormalizeVolumetric( static_cast< size_t >( selectedLight ) );
+         EndLightAction( true, scene );
++        ShowVolumetricChange( previousVolumetric );
+     }
+ 
+     ImGui::BeginChild( "LightList", ImVec2( 0, 150 ), true );
+@@ -1448,13 +1922,20 @@ void RTGL1::LiveEditor::DrawLightPanel( const RgDrawFrameInfo& drawInfo, Scene&
+     if( ImGui::Combo( "Type", &type, types, 3 ) )
+     {
+         BeginLightAction();
++        float sourceRadius = defaultEmitterRadius;
++        if( const auto* point = std::get_if< RgSphericalLightUploadInfo >( &editable.value ) )
++            sourceRadius = point->radius;
++        if( const auto* spot = std::get_if< RgSpotLightUploadInfo >( &editable.value ) )
++            sourceRadius = spot->radius;
+         editable.value = MakeLight( type,
+                                     LightId( editable.value ),
+                                     LightPosition( editable.value, editable.nodePosition ),
+                                     LightDirection( editable.value ),
+                                     LightColor( editable.value ),
+                                     LightIntensity( editable.value ),
+-                                    LightExtra( editable.value ) );
++                                    LightExtra( editable.value ),
++                                    sourceRadius );
++        NormalizeVolumetric();
+         EndLightAction( true, scene );
+     }
+ 
+@@ -1504,11 +1985,12 @@ void RTGL1::LiveEditor::DrawLightPanel( const RgDrawFrameInfo& drawInfo, Scene&
+         EndLightAction( ImGui::IsItemDeactivatedAfterEdit(), scene );
+ 
+     const bool intensityChanged = ImGui::DragFloat(
+-        "Intensity", &LightIntensity( editable.value ), 1.0f, 0.0f, 1000000.0f );
++        "Intensity", &LightIntensity( editable.value ), 1000.0f, 0.0f, 1000000.0f, "%.0f" );
+     if( ImGui::IsItemActivated() ) BeginLightAction();
+     if( intensityChanged )
+     {
+-        LightIntensity( editable.value ) = std::max( 0.0f, LightIntensity( editable.value ) );
++        LightIntensity( editable.value ) =
++            live_editor_logic::IntegerIntensity( LightIntensity( editable.value ) );
+         ApplyLights( scene );
+     }
+     if( ImGui::IsItemDeactivated() )
+@@ -1517,7 +1999,9 @@ void RTGL1::LiveEditor::DrawLightPanel( const RgDrawFrameInfo& drawInfo, Scene&
+     if( auto point = std::get_if< RgSphericalLightUploadInfo >( &editable.value ) )
+     {
+         const bool radiusChanged =
+-            ImGui::DragFloat( "Source radius", &point->radius, 0.01f, 0.0f, 10000.0f );
++            ImGui::DragFloat( "Emitter radius (game units)", &point->radius, 0.01f, 0.0f, 10000.0f );
++        if( ImGui::IsItemHovered() )
++            ImGui::SetTooltip( "Point lights sample a spherical emitter. Flux is distributed over pi*r^2; very small radii create concentrated, noisy emitters. 0.05 metres equals %.3f game units on this map.", defaultEmitterRadius );
+         if( ImGui::IsItemActivated() ) BeginLightAction();
+         if( radiusChanged )
+         {
+@@ -1529,7 +2013,9 @@ void RTGL1::LiveEditor::DrawLightPanel( const RgDrawFrameInfo& drawInfo, Scene&
+     if( auto spot = std::get_if< RgSpotLightUploadInfo >( &editable.value ) )
+     {
+         const bool radiusChanged =
+-            ImGui::DragFloat( "Source radius", &spot->radius, 0.01f, 0.0f, 10000.0f );
++            ImGui::DragFloat( "Emitter radius (game units)", &spot->radius, 0.01f, 0.0f, 10000.0f );
++        if( ImGui::IsItemHovered() )
++            ImGui::SetTooltip( "Spotlights sample a disk perpendicular to their direction. Flux is distributed over pi*r^2; very small radii create concentrated, noisy emitters. 0.05 metres equals %.3f game units on this map.", defaultEmitterRadius );
+         if( ImGui::IsItemActivated() ) BeginLightAction();
+         if( radiusChanged )
+         {
+@@ -1585,30 +2071,27 @@ void RTGL1::LiveEditor::DrawLightPanel( const RgDrawFrameInfo& drawInfo, Scene&
+     bool volumetric = extra.isVolumetric != 0;
+     if( ImGui::Checkbox( "Volumetric source", &volumetric ) )
+     {
++        const std::string previousVolumetric = DescribeVolumetricSource();
+         BeginLightAction();
+         extra.isVolumetric = volumetric;
++        NormalizeVolumetric( volumetric
++                                 ? std::optional< size_t >( static_cast< size_t >( selectedLight ) )
++                                 : std::nullopt );
+         EndLightAction( true, scene );
++        ShowVolumetricChange( previousVolumetric );
++        if( previousVolumetric == DescribeVolumetricSource() && !volumetric )
++            statusMessage = "A volumetric source is required while lights exist";
+     }
+ 
+     if( ImGui::Button( "Duplicate" ) )
+     {
+-        BeginLightAction();
+-        EditableLight copy = editable;
+-        const uint64_t id = NewLightId();
+-        copy.id = std::to_string( id );
+-        copy.name += " copy";
+-        std::visit( [ id ]( auto& value ) { value.uniqueID = id; }, copy.value );
+-        lights.push_back( std::move( copy ) );
+-        selectedLight = static_cast< int >( lights.size() ) - 1;
+-        EndLightAction( true, scene );
++        DuplicateSelectedLight( scene );
++        return;
+     }
+     ImGui::SameLine();
+     if( ImGui::Button( "Delete" ) )
+     {
+-        BeginLightAction();
+-        lights.erase( lights.begin() + selectedLight );
+-        selectedLight = std::min( selectedLight, static_cast< int >( lights.size() ) - 1 );
+-        EndLightAction( true, scene );
++        DeleteSelectedLight( scene );
+         return;
+     }
+ 
+@@ -1627,12 +2110,13 @@ void RTGL1::LiveEditor::DrawLightPanel( const RgDrawFrameInfo& drawInfo, Scene&
+     ImGuizmo::SetOrthographic( false );
+     ImGuizmo::SetDrawlist( ImGui::GetForegroundDrawList() );
+     ImGuizmo::SetRect( 0, 0, io.DisplaySize.x, io.DisplaySize.y );
+-    static ImGuizmo::OPERATION operation = ImGuizmo::TRANSLATE;
+-    if( ImGui::RadioButton( "Move gizmo", operation == ImGuizmo::TRANSLATE ) )
+-        operation = ImGuizmo::TRANSLATE;
++    if( ImGui::RadioButton( "Move gizmo", !rotateGizmo ) )
++        rotateGizmo = false;
+     ImGui::SameLine();
+-    if( ImGui::RadioButton( "Rotate gizmo", operation == ImGuizmo::ROTATE ) )
+-        operation = ImGuizmo::ROTATE;
++    if( ImGui::RadioButton( "Rotate gizmo", rotateGizmo ) )
++        rotateGizmo = true;
++    const ImGuizmo::OPERATION operation =
++        rotateGizmo ? ImGuizmo::ROTATE : ImGuizmo::TRANSLATE;
+     const bool wasUsing = ImGuizmo::IsUsing();
+     ImGuizmo::Manipulate( drawInfo.view,
+                           projection,
+@@ -1813,7 +2297,8 @@ bool RTGL1::LiveEditor::SaveTextureField( std::string_view texture,
+ 
+ void RTGL1::LiveEditor::DrawTexturePanel( TextureMetaManager& manager,
+                                           TextureManager& textures,
+-                                          SceneImportExport& sceneImportExport )
++                                          SceneImportExport& sceneImportExport,
++                                          Scene& scene )
+ {
+     ImGui::InputTextWithHint( "Search", "texture name", textureSearch, std::size( textureSearch ) );
+     ImGui::Checkbox( "Per-map override", &texturePerScene );
+@@ -1857,7 +2342,7 @@ void RTGL1::LiveEditor::DrawTexturePanel( TextureMetaManager& manager,
+     ImGui::EndChild();
+     if( selectedTexture.empty() )
+     {
+-        ImGui::TextDisabled( "Select a texture or point at a surface in flight mode." );
++        ImGui::TextDisabled( "Select a texture or click a visible surface in edit mode." );
+         return;
+     }
+     if( textureEdit.textureName != selectedTexture || textureEditPerScene != texturePerScene )
+@@ -1951,7 +2436,10 @@ void RTGL1::LiveEditor::DrawTexturePanel( TextureMetaManager& manager,
+                                 std::optional< float >& value,
+                                 float defaultValue,
+                                 float minimum,
+-                                float maximum ) {
++                                float maximum,
++                                float speed = 0.01f,
++                                const char* format = "%.3f",
++                                bool integral = false ) {
+         bool used = value.has_value();
+         ImGui::PushID( field );
+         if( ImGui::Checkbox( "Used", &used ) )
+@@ -1963,12 +2451,13 @@ void RTGL1::LiveEditor::DrawTexturePanel( TextureMetaManager& manager,
+         ImGui::SameLine();
+         ImGui::BeginDisabled( !used );
+         float edit = value.value_or( defaultValue );
+-        if( ImGui::DragFloat( label, &edit, 0.01f, minimum, maximum ) )
++        if( ImGui::DragFloat( label, &edit, speed, minimum, maximum, format ) )
+         {
+             LiveEditorDocument* doc = texturePerScene ? sceneTexturesDocument.get()
+                                                       : globalTexturesDocument.get();
+             if( ImGui::IsItemActivated() && doc ) doc->BeginAction();
+-            value = std::clamp( edit, minimum, maximum );
++            edit = std::clamp( edit, minimum, maximum );
++            value = integral ? std::trunc( edit ) : edit;
+             manager.SetLiveOverride( selectedTexture, textureEdit, texturePerScene );
+             sceneImportExport.RequestReimport();
+         }
+@@ -2012,7 +2501,15 @@ void RTGL1::LiveEditor::DrawTexturePanel( TextureMetaManager& manager,
+     }
+     if( ImGui::CollapsingHeader( "Attached light", ImGuiTreeNodeFlags_DefaultOpen ) )
+     {
+-        optionalFloat( "Intensity", "lightIntensity", textureEdit.attachedLightIntensity, 0.0f, 0.0f, 1000000.0f );
++        optionalFloat( "Intensity",
++                       "lightIntensity",
++                       textureEdit.attachedLightIntensity,
++                       0.0f,
++                       0.0f,
++                       1000000.0f,
++                       1000.0f,
++                       "%.0f",
++                       true );
+         bool used = textureEdit.attachedLightColor.has_value();
+         if( ImGui::Checkbox( "Use light color", &used ) )
+         {
+@@ -2053,8 +2550,8 @@ void RTGL1::LiveEditor::DrawTexturePanel( TextureMetaManager& manager,
+         if( selectedSurface.valid && selectedSurface.textureName == selectedTexture &&
+             ImGui::Button( "Create punctual light here" ) )
+         {
+-            lightUndo.push_back( lights );
+-            lightRedo.clear();
++            const std::string previousVolumetric = DescribeVolumetricSource();
++            BeginLightAction();
+             const uint64_t id = NewLightId();
+             lights.push_back( { .id = std::to_string( id ),
+                                 .name = selectedTexture + " light",
+@@ -2064,12 +2561,13 @@ void RTGL1::LiveEditor::DrawTexturePanel( TextureMetaManager& manager,
+                                                     { 0, 0, -1 },
+                                                     0xFFFFFFFF,
+                                                     500.0f,
+-                                                    { .exists = true } ),
++                                                    { .exists = true },
++                                                    defaultEmitterRadius ),
+                                 .nodePosition = selectedSurface.hitPosition } );
+             selectedLight = static_cast< int >( lights.size() ) - 1;
+-            if( gltfDocument ) gltfDocument->BeginAction();
+-            // Scene is updated at the beginning of the next frame; saving is immediate.
+-            SaveLights();
++            NormalizeVolumetric( static_cast< size_t >( selectedLight ) );
++            EndLightAction( true, scene );
++            ShowVolumetricChange( previousVolumetric );
+         }
+     }
+ }
+@@ -2110,45 +2608,109 @@ void RTGL1::LiveEditor::DrawReticleAndGlyphs( const RgDrawFrameInfo& drawInfo )
+     RgFloat3D camera{ inv[ 12 ], inv[ 13 ], inv[ 14 ] };
+     for( size_t i = 0; i < lights.size(); i++ )
+     {
+-        RgFloat3D point = LightPosition( lights[ i ].value, lights[ i ].nodePosition );
+-        if( std::holds_alternative< RgDirectionalLightUploadInfo >( lights[ i ].value ) )
+-        {
+-            auto d = LightDirection( lights[ i ].value );
+-            point = { camera.data[ 0 ] - d.data[ 0 ] * 128.0f,
+-                      camera.data[ 1 ] - d.data[ 1 ] * 128.0f,
+-                      camera.data[ 2 ] - d.data[ 2 ] * 128.0f };
+-        }
+-        ImVec2 screen;
+-        if( Project( drawInfo.view,
+-                     drawInfo.fovYRadians,
+-                     io.DisplaySize.x,
+-                     io.DisplaySize.y,
+-                     point,
+-                     screen ) )
+-        {
+-            const bool selected = selectedLight == static_cast< int >( i );
+-            const auto colorBytes = Utils::UnpackColor4DPacked32Components(
+-                std::visit( []( const auto& value ) { return value.color; }, lights[ i ].value ) );
+-            const ImU32 lightColor =
+-                IM_COL32( colorBytes[ 0 ], colorBytes[ 1 ], colorBytes[ 2 ], 255 );
+-            const ImU32 haloColor = selected ? IM_COL32( 255, 255, 255, 255 )
+-                                              : IM_COL32( 255, 176, 48, 220 );
+-            draw->AddCircleFilled( screen, 6.0f, lightColor );
+-            draw->AddCircle( screen, selected ? 11.0f : 10.0f, haloColor, 16, selected ? 2.5f : 2.0f );
+-        }
+-
+-        if( selectedLight == static_cast< int >( i ) )
+-        {
+-            if( const auto* spot =
+-                    std::get_if< RgSpotLightUploadInfo >( &lights[ i ].value ) )
++        const bool selected = selectedLight == static_cast< int >( i );
++        const auto colorBytes = Utils::UnpackColor4DPacked32Components(
++            std::visit( []( const auto& value ) { return value.color; }, lights[ i ].value ) );
++        const ImU32 lightColor =
++            IM_COL32( colorBytes[ 0 ], colorBytes[ 1 ], colorBytes[ 2 ], 255 );
++        ProjectedLightGlyph glyph{};
++        if( ProjectLightGlyph( drawInfo,
++                               io.DisplaySize,
++                               camera,
++                               lights[ i ].value,
++                               lights[ i ].nodePosition,
++                               glyph ) )
++        {
++            if( glyph.directional )
++            {
++                DrawSunGlyph( draw, glyph.screen, glyph.scale, lightColor, selected );
++            }
++            else
++            {
++                draw->AddCircleFilled( glyph.screen, 6.0f * glyph.scale, lightColor, 20 );
++                draw->AddCircle( glyph.screen,
++                                 10.0f * glyph.scale,
++                                 IM_COL32( 0, 0, 0, 255 ),
++                                 20,
++                                 2.0f );
++                if( selected )
++                {
++                    draw->AddCircle( glyph.screen,
++                                     12.0f * glyph.scale,
++                                     IM_COL32( 255, 255, 255, 255 ),
++                                     24,
++                                     2.0f );
++                }
++            }
++        }
++
++        if( selected )
++        {
++            if( const auto* point =
++                    std::get_if< RgSphericalLightUploadInfo >( &lights[ i ].value ) )
++            {
++                constexpr RgFloat3D X{ 1, 0, 0 };
++                constexpr RgFloat3D Y{ 0, 1, 0 };
++                constexpr RgFloat3D Z{ 0, 0, 1 };
++                for( const auto& axes : std::array{ std::pair{ X, Y },
++                                                     std::pair{ X, Z },
++                                                     std::pair{ Y, Z } } )
++                {
++                    DrawProjectedRing( draw,
++                                       drawInfo,
++                                       io.DisplaySize,
++                                       point->position,
++                                       axes.first,
++                                       axes.second,
++                                       point->radius,
++                                       IM_COL32( 0, 0, 0, 230 ),
++                                       3.0f );
++                    DrawProjectedRing( draw,
++                                       drawInfo,
++                                       io.DisplaySize,
++                                       point->position,
++                                       axes.first,
++                                       axes.second,
++                                       point->radius,
++                                       lightColor,
++                                       1.4f );
++                }
++            }
++            if( const auto* spot = std::get_if< RgSpotLightUploadInfo >( &lights[ i ].value ) )
+             {
+-                const auto colorBytes = Utils::UnpackColor4DPacked32Components( spot->color );
++                const RgFloat3D direction =
++                    Utils::SafeNormalize( spot->direction, { 0, 0, -1 } );
++                const RgFloat3D reference =
++                    std::abs( direction.data[ 2 ] ) < 0.95f ? RgFloat3D{ 0, 0, 1 }
++                                                            : RgFloat3D{ 0, 1, 0 };
++                const RgFloat3D right =
++                    Utils::SafeNormalize( Cross( direction, reference ), { 1, 0, 0 } );
++                const RgFloat3D up =
++                    Utils::SafeNormalize( Cross( right, direction ), { 0, 1, 0 } );
++                DrawProjectedRing( draw,
++                                   drawInfo,
++                                   io.DisplaySize,
++                                   spot->position,
++                                   right,
++                                   up,
++                                   spot->radius,
++                                   IM_COL32( 0, 0, 0, 230 ),
++                                   3.0f );
++                DrawProjectedRing( draw,
++                                   drawInfo,
++                                   io.DisplaySize,
++                                   spot->position,
++                                   right,
++                                   up,
++                                   spot->radius,
++                                   lightColor,
++                                   1.4f );
+                 DrawProjectedSpotCone( draw,
+                                        drawInfo,
+                                        io.DisplaySize,
+                                        *spot,
+                                        spot->angleOuter,
+-                                       96.0f,
++                                       40.0f,
+                                        IM_COL32( colorBytes[ 0 ],
+                                                  colorBytes[ 1 ],
+                                                  colorBytes[ 2 ],
+@@ -2160,7 +2722,7 @@ void RTGL1::LiveEditor::DrawReticleAndGlyphs( const RgDrawFrameInfo& drawInfo )
+                                        io.DisplaySize,
+                                        *spot,
+                                        spot->angleInner,
+-                                       96.0f,
++                                       40.0f,
+                                        IM_COL32( colorBytes[ 0 ],
+                                                  colorBytes[ 1 ],
+                                                  colorBytes[ 2 ],
+diff --git a/Source/LiveEditor.h b/Source/LiveEditor.h
+index d950cc2..d5fd48f 100644
+--- a/Source/LiveEditor.h
++++ b/Source/LiveEditor.h
+@@ -5,8 +5,10 @@
+ 
+ #include "Common.h"
+ #include "JsonParser.h"
++#include "LiveEditorLogic.h"
+ #include "LiveEditorPersistence.h"
+ 
++#include <array>
+ #include <deque>
+ #include <memory>
+ 
+@@ -85,7 +87,7 @@ private:
+     bool LoadStoredLights();
+     void ReadGltfLayout();
+     void ApplyLights( Scene& scene ) const;
+-    void PickAtReticle( const RgDrawFrameInfo& drawInfo, const Scene& scene );
++    void PickAtCursor( const RgDrawFrameInfo& drawInfo, const Scene& scene );
+     void PollExternalChanges( SceneImportExport& sceneImportExport,
+                               SceneMetaManager& sceneMeta,
+                               TextureMetaManager& textureMeta );
+@@ -103,9 +105,14 @@ private:
+     void DrawAtmospherePanel( SceneMetaManager& manager );
+     void DrawTexturePanel( TextureMetaManager& manager,
+                            TextureManager& textures,
+-                           SceneImportExport& sceneImportExport );
++                           SceneImportExport& sceneImportExport,
++                           Scene& scene );
+     void DrawMeshPanel();
+     void DrawReticleAndGlyphs( const RgDrawFrameInfo& drawInfo );
++    void HandleHotkeys( Scene& scene,
++                        SceneImportExport& sceneImportExport,
++                        SceneMetaManager& sceneMeta,
++                        TextureMetaManager& textureMeta );
+ 
+     void RenderImGui( uint32_t frameIndex,
+                       VkCommandBuffer materialCmd,
+@@ -122,6 +129,18 @@ private:
+     void UndoLights( Scene& scene );
+     void RedoLights( Scene& scene );
+     void RefreshUnsavedStatus();
++    void UndoAtmosphere( SceneMetaManager& manager, bool redo );
++    void UndoTexture( TextureMetaManager& manager,
++                      SceneImportExport& sceneImportExport,
++                      bool redo );
++
++    std::string DescribeVolumetricSource() const;
++    bool NormalizeVolumetric( std::optional< size_t > preferred = std::nullopt );
++    void ShowVolumetricChange( std::string_view previous );
++    void NormalizeVolumetricAfterLoad( Scene& scene );
++    void DuplicateSelectedLight( Scene& scene );
++    void DeleteSelectedLight( Scene& scene );
++    void PasteSelectedLight( Scene& scene );
+ 
+     bool SaveSceneField( std::string_view field, std::optional< std::string_view > value );
+     bool SaveTextureField( std::string_view texture,
+@@ -145,13 +164,16 @@ private:
+     bool enabled{};
+     bool workspaceOpen{};
+     bool requestPick{};
++    live_editor_logic::ModeState mode;
+     WorkspaceTab requestedTab{ WorkspaceTab::None };
++    WorkspaceTab activeTab{ WorkspaceTab::Lights };
+     bool fontUploaded{};
+     bool lightsSeeded{};
+     bool deferLightSeed{};
+     bool needsGltfMirror{};
+     bool gltfHasEditorPunctualMirror{};
+     bool lightAction{};
++    bool normalizeVolumetricOnNextFrame{};
+     bool hasUnsavedChanges{};
+     uint32_t mapSerial{};
+     uint64_t lightIdCounter{ 1 };
+@@ -160,11 +182,15 @@ private:
+ 
+     float mouseX{};
+     float mouseY{};
++    float defaultEmitterRadius{ 2.0f };
++    bool rotateGizmo{};
++    std::array< bool, 512 > keyDown{};
+ 
+     std::vector< EditableLight > lights;
+     std::vector< EditableLight > lightActionStart;
+     std::vector< std::vector< EditableLight > > lightUndo;
+     std::vector< std::vector< EditableLight > > lightRedo;
++    std::optional< EditableLight > lightClipboard;
+     int selectedLight{ -1 };
+     SurfaceSelection selectedSurface;
+ 
+diff --git a/Source/LiveEditorLogic.h b/Source/LiveEditorLogic.h
+new file mode 100644
+index 0000000..b0fab2d
+--- /dev/null
++++ b/Source/LiveEditorLogic.h
+@@ -0,0 +1,178 @@
++// Copyright (c) 2026 They Still Hunger contributors
++// SPDX-License-Identifier: MIT
++
++#pragma once
++
++#include <RTGL1/RTGL1.h>
++
++#include <algorithm>
++#include <cmath>
++#include <cstddef>
++#include <limits>
++#include <optional>
++#include <span>
++
++namespace RTGL1::live_editor_logic
++{
++
++constexpr bool IsShiftScancode( int key )
++{
++    return key == 225 || key == 229;
++}
++
++struct ModeState
++{
++    bool editRequested{ true };
++    bool leftShift{};
++    bool rightShift{};
++
++    bool IsEditing() const { return editRequested && !leftShift && !rightShift; }
++
++    void ResetToEdit()
++    {
++        editRequested = true;
++        leftShift = false;
++        rightShift = false;
++    }
++
++    void Toggle()
++    {
++        editRequested = !editRequested;
++    }
++
++    void SetShift( int key, bool down )
++    {
++        if( key == 225 ) leftShift = down;
++        if( key == 229 ) rightShift = down;
++    }
++};
++
++inline float DefaultEmitterRadius( float oneGameUnitInMeters )
++{
++    return 0.05f / std::max( oneGameUnitInMeters, 0.00001f );
++}
++
++inline float GlyphScale( float cameraDistance )
++{
++    return std::clamp( 128.0f / std::max( cameraDistance, 0.001f ), 1.0f, 3.0f );
++}
++
++inline bool GlyphHitTest( float deltaX, float deltaY, float radius )
++{
++    return deltaX * deltaX + deltaY * deltaY <= radius * radius;
++}
++
++inline float IntegerIntensity( float intensity )
++{
++    return std::trunc( std::max( 0.0f, intensity ) );
++}
++
++template< typename Tab >
++bool ConsumeDeferredTab( Tab& requested, Tab opened, Tab none )
++{
++    if( requested != opened ) return false;
++    requested = none;
++    return true;
++}
++
++inline bool IsPickablePrimitive( uint32_t flags )
++{
++    return ( flags & ( RG_MESH_PRIMITIVE_FIRST_PERSON |
++                       RG_MESH_PRIMITIVE_FIRST_PERSON_VIEWER ) ) == 0;
++}
++
++struct CursorRay
++{
++    RgFloat3D origin{};
++    RgFloat3D direction{ { 0, 0, -1 } };
++};
++
++inline CursorRay MakeCursorRay( const float* inverseView,
++                                float        fovYRadians,
++                                float        width,
++                                float        height,
++                                float        mouseX,
++                                float        mouseY )
++{
++    CursorRay result{};
++    if( !inverseView || width <= 0.0f || height <= 0.0f )
++    {
++        return result;
++    }
++
++    result.origin = { inverseView[ 12 ], inverseView[ 13 ], inverseView[ 14 ] };
++    const RgFloat3D right{ inverseView[ 0 ], inverseView[ 1 ], inverseView[ 2 ] };
++    const RgFloat3D up{ inverseView[ 4 ], inverseView[ 5 ], inverseView[ 6 ] };
++    const RgFloat3D forward{ -inverseView[ 8 ], -inverseView[ 9 ], -inverseView[ 10 ] };
++
++    const float ndcX = mouseX / width * 2.0f - 1.0f;
++    const float ndcY = 1.0f - mouseY / height * 2.0f;
++    const float tanHalfY = std::tan( fovYRadians * 0.5f );
++    const float tanHalfX = tanHalfY * width / height;
++    RgFloat3D direction{
++        forward.data[ 0 ] + right.data[ 0 ] * ndcX * tanHalfX +
++            up.data[ 0 ] * ndcY * tanHalfY,
++        forward.data[ 1 ] + right.data[ 1 ] * ndcX * tanHalfX +
++            up.data[ 1 ] * ndcY * tanHalfY,
++        forward.data[ 2 ] + right.data[ 2 ] * ndcX * tanHalfX +
++            up.data[ 2 ] * ndcY * tanHalfY,
++    };
++    const float length = std::sqrt( direction.data[ 0 ] * direction.data[ 0 ] +
++                                    direction.data[ 1 ] * direction.data[ 1 ] +
++                                    direction.data[ 2 ] * direction.data[ 2 ] );
++    if( length > 0.000001f )
++    {
++        direction.data[ 0 ] /= length;
++        direction.data[ 1 ] /= length;
++        direction.data[ 2 ] /= length;
++    }
++    result.direction = direction;
++    return result;
++}
++
++struct VolumetricCandidate
++{
++    bool  marked{};
++    bool  directional{};
++    float intensity{};
++};
++
++inline std::optional< size_t > SelectVolumetricCandidate(
++    std::span< const VolumetricCandidate > candidates,
++    bool                                   markedOnly,
++    std::optional< size_t >                preferred = std::nullopt )
++{
++    const auto eligible = [ & ]( size_t i ) {
++        return i < candidates.size() && ( !markedOnly || candidates[ i ].marked );
++    };
++    if( preferred && eligible( *preferred ) )
++    {
++        return preferred;
++    }
++
++    const bool hasDirectional = [ & ] {
++        for( size_t i = 0; i < candidates.size(); i++ )
++        {
++            if( eligible( i ) && candidates[ i ].directional ) return true;
++        }
++        return false;
++    }();
++
++    std::optional< size_t > best;
++    float bestIntensity = -std::numeric_limits< float >::infinity();
++    for( size_t i = 0; i < candidates.size(); i++ )
++    {
++        if( !eligible( i ) || ( hasDirectional && !candidates[ i ].directional ) )
++        {
++            continue;
++        }
++        if( !best || candidates[ i ].intensity > bestIntensity )
++        {
++            best = i;
++            bestIntensity = candidates[ i ].intensity;
++        }
++    }
++    return best;
++}
++
++} // namespace RTGL1::live_editor_logic
+diff --git a/Source/Scene.cpp b/Source/Scene.cpp
+index be11d8a..991cdf9 100644
+--- a/Source/Scene.cpp
++++ b/Source/Scene.cpp
+@@ -426,6 +426,7 @@ void RTGL1::Scene::CapturePickPrimitive( const RgMeshInfo&          mesh,
+         .meshName = Utils::SafeCstr( mesh.pMeshName ),
+         .primitiveName = Utils::SafeCstr( primitive.pPrimitiveNameInMesh ),
+         .textureName = Utils::SafeCstr( primitive.pTextureName ),
++        .flags = primitive.flags,
+         .rasterized = false,
+     };
+     captured.positions.reserve( primitive.vertexCount );
+diff --git a/Source/Scene.h b/Source/Scene.h
+index c6425b0..8ed6e7f 100644
+--- a/Source/Scene.h
++++ b/Source/Scene.h
+@@ -53,6 +53,7 @@ public:
+         std::string textureName;
+         std::vector< RgFloat3D > positions;
+         std::vector< uint32_t > indices;
++        uint32_t flags{};
+         bool rasterized{};
+     };
+ 
+diff --git a/Tests/LiveEditorLogicTests.cpp b/Tests/LiveEditorLogicTests.cpp
+new file mode 100644
+index 0000000..0476a90
+--- /dev/null
++++ b/Tests/LiveEditorLogicTests.cpp
+@@ -0,0 +1,95 @@
++// Copyright (c) 2026 They Still Hunger contributors
++// SPDX-License-Identifier: MIT
++
++#include "LiveEditorLogic.h"
++
++#include <cassert>
++#include <cmath>
++#include <vector>
++
++int main()
++{
++    using namespace RTGL1::live_editor_logic;
++
++    ModeState mode{};
++    assert( mode.IsEditing() );
++    mode.Toggle();
++    assert( !mode.IsEditing() );
++    mode.Toggle();
++    mode.SetShift( 225, true );
++    assert( !mode.IsEditing() );
++    mode.SetShift( 229, true );
++    mode.SetShift( 225, false );
++    assert( !mode.IsEditing() );
++    mode.SetShift( 229, false );
++    assert( mode.IsEditing() );
++    mode.SetShift( 225, true );
++    mode.SetShift( 225, false ); // synthesized on focus loss
++    assert( mode.IsEditing() );
++    mode.ResetToEdit();
++    assert( mode.IsEditing() );
++
++    assert( std::abs( DefaultEmitterRadius( 0.025f ) - 2.0f ) < 0.0001f );
++    assert( GlyphScale( 512.0f ) == 1.0f );
++    assert( GlyphScale( 64.0f ) == 2.0f );
++    assert( GlyphScale( 1.0f ) == 3.0f );
++    assert( GlyphHitTest( 6.0f, 8.0f, 10.0f ) );
++    assert( !GlyphHitTest( 6.1f, 8.0f, 10.0f ) );
++    assert( IntegerIntensity( 160999.75f ) == 160999.0f );
++    assert( IntegerIntensity( -1.0f ) == 0.0f );
++
++    enum class Tab
++    {
++        None,
++        Lights,
++        Textures,
++    };
++    Tab requested = Tab::Textures;
++    assert( !ConsumeDeferredTab( requested, Tab::Lights, Tab::None ) );
++    assert( requested == Tab::Textures );
++    assert( ConsumeDeferredTab( requested, Tab::Textures, Tab::None ) );
++    assert( requested == Tab::None );
++
++    assert( IsPickablePrimitive( 0 ) );
++    assert( !IsPickablePrimitive( RG_MESH_PRIMITIVE_FIRST_PERSON ) );
++    assert( !IsPickablePrimitive( RG_MESH_PRIMITIVE_FIRST_PERSON_VIEWER ) );
++
++    const float identity[ 16 ] = {
++        1, 0, 0, 0,
++        0, 1, 0, 0,
++        0, 0, 1, 0,
++        0, 0, 0, 1,
++    };
++    const CursorRay center = MakeCursorRay( identity, 1.57079632679f, 1920, 1080, 960, 540 );
++    assert( std::abs( center.direction.data[ 0 ] ) < 0.0001f );
++    assert( std::abs( center.direction.data[ 1 ] ) < 0.0001f );
++    assert( std::abs( center.direction.data[ 2 ] + 1.0f ) < 0.0001f );
++    const CursorRay upperRight =
++        MakeCursorRay( identity, 1.57079632679f, 1920, 1080, 1920, 0 );
++    assert( upperRight.direction.data[ 0 ] > 0.0f );
++    assert( upperRight.direction.data[ 1 ] > 0.0f );
++    assert( upperRight.direction.data[ 2 ] < 0.0f );
++
++    std::vector< VolumetricCandidate > candidates = {
++        { .marked = false, .directional = false, .intensity = 500.0f },
++        { .marked = false, .directional = true, .intensity = 3.0f },
++        { .marked = false, .directional = true, .intensity = 2.0f },
++    };
++    assert( SelectVolumetricCandidate( candidates, false ) == 1 );
++    candidates[ 0 ].marked = true;
++    candidates[ 1 ].marked = true;
++    assert( SelectVolumetricCandidate( candidates, true ) == 1 );
++    assert( SelectVolumetricCandidate( candidates, true, 0 ) == 0 );
++    candidates[ 1 ].directional = false;
++    assert( SelectVolumetricCandidate( candidates, true ) == 0 );
++    candidates = {
++        { .marked = false, .directional = false, .intensity = 500.0f },
++        { .marked = false, .directional = false, .intensity = 700.0f },
++    };
++    assert( SelectVolumetricCandidate( candidates, false ) == 1 );
++    assert( SelectVolumetricCandidate( candidates, false, 0 ) == 0 );
++    candidates.clear();
++    assert( !SelectVolumetricCandidate( candidates, false ) );
++
++    return 0;
++}
+-- 
+2.52.0.windows.1
+

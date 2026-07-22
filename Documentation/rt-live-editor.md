@@ -6,19 +6,34 @@ to an active developer-mode single-player game using `ref_gl`.
 
 ## Controls
 
-- `F10`: enter or leave editing mode.
-- Mouse and normal movement keys: fly and look around; Shift boosts speed.
-- Primary click while flying: select the light glyph or visible surface at the
-  center reticle.
-- Light glyph centers use the authored light color. Selecting a spotlight shows
-  its inner and outer cone wireframes in that color.
-- `Tab`: open the workspace without selecting anything.
-- `Escape`: close the workspace and resume editor flight.
+- `F10`: enter the editor in Edit mode, or leave it and restore normal play.
+- `Tab`: toggle between Edit and Flight modes.
+- Edit mode locks the camera, shows the workspace and cursor, and selects light
+  glyphs or visible map surfaces at the cursor. `Shift` temporarily enters
+  Flight mode for as long as either Shift key is held.
+- Flight mode uses the actual player as a fast noclip camera. Mouse clicks are
+  consumed and cannot select or trigger gameplay actions.
+- `R`: switch the selected light gizmo between move and rotate.
+- `Delete`: delete the selected light.
+- `Ctrl+C` / `Ctrl+V`: copy and paste a light's authored settings while keeping
+  the target's position and stable ID.
+- `Ctrl+D`: duplicate the selected light.
+- `Ctrl+Z` / `Ctrl+Y`: undo or redo the active Lights, Atmosphere, or Textures
+  panel.
+- `Escape`: cancel the focused UI or clear the current selection.
 - `rt_editor_retry_save`: retry files which remain visibly unsaved.
 
-Opening the workspace freezes the detached camera and releases the cursor.
 Gameplay commands, HUD, VGUI, and the viewmodel are suppressed for the entire
-editor session and restored on exit.
+editor session and restored on exit. Focus loss synthesizes Shift release so a
+temporary flight cannot remain stuck.
+
+Point and spot light glyphs keep their previous screen size as a minimum and
+grow when approached. Directional lights use a sun glyph. Selected spotlights
+show compact inner and outer cone wireframes; selected point and spot lights
+also show the spherical or disk emitter represented by **Emitter radius (game
+units)**. New emitters use 0.05 metres divided by the map world scale (2.0 game
+units at Xash's 0.025 m/unit scale). Very small radii concentrate flux over a
+small area and can produce noisy denoiser results.
 
 ## Authored data
 
@@ -32,6 +47,11 @@ angular-diameter, lightstyle, and volumetric properties needed by the runtime.
 `rt_suppress_original_lights` records explicit ownership even when the authored
 list is empty. Existing glTF fields, extensions, buffers, and images are left
 untouched.
+
+Exactly one authored light is kept as the volumetric source whenever the list
+is non-empty. If its owner is removed, the brightest directional light is used
+first, otherwise the brightest remaining light. The empty authored-light set
+remains intentional and valid.
 
 Every completed action is saved using a validated sibling temporary file and
 atomic replacement. The first version of each touched file is copied to the

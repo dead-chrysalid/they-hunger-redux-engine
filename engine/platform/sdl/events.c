@@ -220,6 +220,22 @@ static void SDLash_RTEditorUpdateCursor( void )
 	wasActive = status.active;
 	hadCursor = status.wantsCursor;
 }
+
+static void SDLash_RTEditorReleaseShift( void )
+{
+	ref_editor_status_t status;
+	ref_editor_event_t input;
+	R_RTEditorGetStatus( &status );
+	if( !status.active ) return;
+
+	memset( &input, 0, sizeof( input ));
+	input.type = REF_EDITOR_EVENT_KEY;
+	input.down = false;
+	input.key = SDL_SCANCODE_LSHIFT;
+	R_RTEditorHandleInput( &input );
+	input.key = SDL_SCANCODE_RSHIFT;
+	R_RTEditorHandleInput( &input );
+}
 #endif
 
 /*
@@ -736,6 +752,9 @@ static void SDLash_EventFilter( SDL_Event *event )
 			SDLash_ActiveEvent( true );
 			break;
 		case SDL_WINDOWEVENT_FOCUS_LOST:
+#if SDL_VERSION_ATLEAST( 2, 0, 0 )
+			SDLash_RTEditorReleaseShift();
+#endif
 			SDLash_ActiveEvent( false );
 			break;
 		case SDL_WINDOWEVENT_RESIZED:
