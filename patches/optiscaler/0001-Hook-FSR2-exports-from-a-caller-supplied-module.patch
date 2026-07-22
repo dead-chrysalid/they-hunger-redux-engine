@@ -1,0 +1,121 @@
+diff --git a/OptiScaler/inputs/FSR2_Vk.cpp b/OptiScaler/inputs/FSR2_Vk.cpp
+index d605f58..2788301 100644
+--- a/OptiScaler/inputs/FSR2_Vk.cpp
++++ b/OptiScaler/inputs/FSR2_Vk.cpp
+@@ -615,9 +615,15 @@ static FfxDevice ffxGetDevice_Vk(VkDevice device)
+     return o_ffxGetDevice_Vk(device);
+ }
+ 
+-void HookFSR2VkExeInputs()
++bool HookFSR2VkModuleInputs(HMODULE module)
+ {
+-    LOG_INFO("Trying to hook FSR2 Vk methods");
++    if (module == nullptr)
++    {
++        LOG_WARN("Can't hook FSR2 Vk methods from a null module");
++        return false;
++    }
++
++    LOG_INFO("Trying to hook FSR2 Vk methods from module {:X}", (size_t) module);
+ 
+     DetourTransactionBegin();
+     DetourUpdateThread(GetCurrentThread());
+@@ -626,7 +632,7 @@ void HookFSR2VkExeInputs()
+     if (o_ffxFsr2ContextCreate_Vk == nullptr)
+     {
+         o_ffxFsr2ContextCreate_Vk =
+-            (PFN_ffxFsr2ContextCreate) KernelBaseProxy::GetProcAddress_()(exeModule, "ffxFsr2ContextCreate");
++            (PFN_ffxFsr2ContextCreate) KernelBaseProxy::GetProcAddress_()(module, "ffxFsr2ContextCreate");
+ 
+         if (o_ffxFsr2ContextCreate_Vk != nullptr)
+             DetourAttach(&(PVOID&) o_ffxFsr2ContextCreate_Vk, ffxFsr2ContextCreate_Vk);
+@@ -638,7 +644,7 @@ void HookFSR2VkExeInputs()
+     if (o_ffxFsr2ContextDispatch_Vk == nullptr)
+     {
+         o_ffxFsr2ContextDispatch_Vk =
+-            (PFN_ffxFsr2ContextDispatch) KernelBaseProxy::GetProcAddress_()(exeModule, "ffxFsr2ContextDispatch");
++            (PFN_ffxFsr2ContextDispatch) KernelBaseProxy::GetProcAddress_()(module, "ffxFsr2ContextDispatch");
+ 
+         if (o_ffxFsr2ContextDispatch_Vk != nullptr)
+             DetourAttach(&(PVOID&) o_ffxFsr2ContextDispatch_Vk, ffxFsr2ContextDispatch_Vk);
+@@ -650,7 +656,7 @@ void HookFSR2VkExeInputs()
+     if (o_ffxFsr2ContextDestroy_Vk == nullptr)
+     {
+         o_ffxFsr2ContextDestroy_Vk =
+-            (PFN_ffxFsr2ContextDestroy) KernelBaseProxy::GetProcAddress_()(exeModule, "ffxFsr2ContextDestroy");
++            (PFN_ffxFsr2ContextDestroy) KernelBaseProxy::GetProcAddress_()(module, "ffxFsr2ContextDestroy");
+ 
+         if (o_ffxFsr2ContextDestroy_Vk != nullptr)
+             DetourAttach(&(PVOID&) o_ffxFsr2ContextDestroy_Vk, ffxFsr2ContextDestroy_Vk);
+@@ -663,7 +669,7 @@ void HookFSR2VkExeInputs()
+     {
+         o_ffxFsr2GetUpscaleRatioFromQualityMode_Vk =
+             (PFN_ffxFsr2GetUpscaleRatioFromQualityMode) KernelBaseProxy::GetProcAddress_()(
+-                exeModule, "ffxFsr2GetUpscaleRatioFromQualityMode");
++                module, "ffxFsr2GetUpscaleRatioFromQualityMode");
+ 
+         if (o_ffxFsr2GetUpscaleRatioFromQualityMode_Vk != nullptr)
+             DetourAttach(&(PVOID&) o_ffxFsr2GetUpscaleRatioFromQualityMode_Vk,
+@@ -678,7 +684,7 @@ void HookFSR2VkExeInputs()
+     {
+         o_ffxFsr2GetRenderResolutionFromQualityMode_Vk =
+             (PFN_ffxFsr2GetRenderResolutionFromQualityMode) KernelBaseProxy::GetProcAddress_()(
+-                exeModule, "ffxFsr2GetRenderResolutionFromQualityMode");
++                module, "ffxFsr2GetRenderResolutionFromQualityMode");
+ 
+         if (o_ffxFsr2GetRenderResolutionFromQualityMode_Vk != nullptr)
+             DetourAttach(&(PVOID&) o_ffxFsr2GetRenderResolutionFromQualityMode_Vk,
+@@ -692,7 +698,7 @@ void HookFSR2VkExeInputs()
+     if (o_ffxFsr2GetJitterPhaseCount_Vk == nullptr)
+     {
+         o_ffxFsr2GetJitterPhaseCount_Vk = (PFN_ffxFsr2GetJitterPhaseCount) KernelBaseProxy::GetProcAddress_()(
+-            exeModule, "ffxFsr2GetJitterPhaseCount");
++            module, "ffxFsr2GetJitterPhaseCount");
+ 
+         if (o_ffxFsr2GetJitterPhaseCount_Vk != nullptr)
+             DetourAttach(&(PVOID&) o_ffxFsr2GetJitterPhaseCount_Vk, ffxFsr2GetJitterPhaseCount_Vk);
+@@ -704,7 +710,7 @@ void HookFSR2VkExeInputs()
+     if (o_ffxFsr2GetScratchMemorySize_Vk == nullptr)
+     {
+         o_ffxFsr2GetScratchMemorySize_Vk = (PFN_ffxFsr2GetScratchMemorySizeVK) KernelBaseProxy::GetProcAddress_()(
+-            exeModule, "ffxFsr2GetScratchMemorySizeVK");
++            module, "ffxFsr2GetScratchMemorySizeVK");
+ 
+         if (o_ffxFsr2GetScratchMemorySize_Vk != nullptr)
+             DetourAttach(&(PVOID&) o_ffxFsr2GetScratchMemorySize_Vk, ffxFsr2GetScratchMemorySize_Vk);
+@@ -715,7 +721,7 @@ void HookFSR2VkExeInputs()
+     // ffxGetDeviceVK
+     if (o_ffxGetDevice_Vk == nullptr)
+     {
+-        o_ffxGetDevice_Vk = (PFN_ffxGetDeviceVK) KernelBaseProxy::GetProcAddress_()(exeModule, "ffxGetDeviceVK");
++        o_ffxGetDevice_Vk = (PFN_ffxGetDeviceVK) KernelBaseProxy::GetProcAddress_()(module, "ffxGetDeviceVK");
+ 
+         if (o_ffxGetDevice_Vk != nullptr)
+             DetourAttach(&(PVOID&) o_ffxGetDevice_Vk, ffxGetDevice_Vk);
+@@ -738,4 +744,16 @@ void HookFSR2VkExeInputs()
+         o_ffxFsr2GetScratchMemorySize_Vk = nullptr;
+         o_ffxGetDevice_Vk = nullptr;
+     }
++
++    return State::Instance().fsrHooks;
++}
++
++void HookFSR2VkExeInputs()
++{
++    HookFSR2VkModuleInputs(exeModule);
++}
++
++extern "C" __declspec(dllexport) BOOL WINAPI OptiScalerHookFSR2VkModule(HMODULE module)
++{
++    return HookFSR2VkModuleInputs(module) ? TRUE : FALSE;
+ }
+diff --git a/OptiScaler/inputs/FSR2_Vk.h b/OptiScaler/inputs/FSR2_Vk.h
+index 2f1c693..d287ccc 100644
+--- a/OptiScaler/inputs/FSR2_Vk.h
++++ b/OptiScaler/inputs/FSR2_Vk.h
+@@ -1,4 +1,5 @@
+ #pragma once
+ #include "SysUtils.h"
+ 
++bool HookFSR2VkModuleInputs(HMODULE module);
+ void HookFSR2VkExeInputs();
