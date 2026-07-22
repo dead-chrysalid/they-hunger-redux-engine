@@ -14,6 +14,9 @@ official v0.9.4 source revision:
 
 The patch keeps the existing executable lookup for normal users and adds the
 exported `OptiScalerHookFSR2VkModule` handshake used by the matching
-RayTracedGL1 dependency patch. The isolated runtime preserves the official
-signed proxy as `dbghelp.optiscaler-official.dll`; locally patched builds are
-unsigned.
+RayTracedGL1 dependency patch. It excludes the optional `ffxGetDeviceVK`
+detour because optimized static FSR2 builds can fold that identity function
+with `ffxGetCommandListVK`; hooking the shared address corrupts the saved
+Vulkan device on the first command-list conversion. The isolated runtime
+preserves the official signed proxy as `dbghelp.optiscaler-official.dll`;
+locally patched builds are unsigned.

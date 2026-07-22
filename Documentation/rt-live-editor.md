@@ -88,6 +88,13 @@ first FSR2 context. The original signed v0.9.4 proxy is preserved as
 unsigned local build. The initial output remains native Vulkan FSR3.1, with
 trace-file logging and the Insert-key overlay enabled.
 
+The module hook deliberately excludes `ffxGetDeviceVK`. In optimized
+RayTracedGL1 builds the linker folds that identity function together with
+`ffxGetCommandListVK`, giving both exports one address. Detouring it would also
+intercept command-list conversion and overwrite OptiScaler's Vulkan device
+with a command-buffer handle. The device is already available from FSR2
+context creation, so this helper hook is both unnecessary and unsafe.
+
 Keep `developerMode` enabled but set `developerWindow` to `false` in the
 isolated `RayTracedGL1.json`. Developer texture loading, hot reload, and live
 editor support remain enabled, while the legacy `RTGL1 Dev` GLFW window and its
