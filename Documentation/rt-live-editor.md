@@ -65,7 +65,7 @@ The tracked dependency patch is documented in
 `patches/raytracedgl1/README.md`. The renderer interface is version 4; the
 client DLL interface remains version 10.
 
-## Upscaling experiment
+## OptiScaler FSR4 integration
 
 The editor renderer must be configured with `RG_WITH_AMD_FSR2=ON`. The
 isolated runtime uses `rt_upscale_fsr2 2`, and OptiScaler consumes that native
@@ -80,13 +80,13 @@ but its Vulkan FSR2 path searches only the main executable for exported FSR2
 functions. RayTracedGL1 statically owns those functions, so the stock hook
 addresses remain zero and native FSR2 continues to run unchanged.
 
-The isolated experiment therefore uses the tracked OptiScaler patch in
+The isolated runtime therefore uses the tracked OptiScaler patch in
 `patches/optiscaler`. The patched proxy exposes a narrow module-hook entry
 point, and RayTracedGL1 calls it with its own module handle before creating the
-first FSR2 context. The original signed v0.9.4 proxy is preserved as
-`dbghelp.optiscaler-official.dll`; the active experimental `dbghelp.dll` is an
-unsigned local build. The initial output remains native Vulkan FSR3.1, with
-trace-file logging and the Insert-key overlay enabled.
+first FSR2 context. The active `dbghelp.dll` is an unsigned local build. This
+handshake is the only local OptiScaler behavior change; its overlay,
+Vulkan-to-DX12 interop, resource conversion, and upscalers remain the normal
+v0.9.4 implementation.
 
 The module hook deliberately excludes `ffxGetDeviceVK`. In optimized
 RayTracedGL1 builds the linker folds that identity function together with
@@ -104,11 +104,17 @@ window.
 
 Restoring native FSR2 also explains the editor build's large performance
 recovery: the earlier regression was native-resolution rendering after FSR2
-had been disabled, not a persistent cost in the live-editor overlay. OptiScaler
-must be verified separately in `OptiScaler.log`; an injected overlay alone does
-not prove that the native FSR2 dispatch was replaced.
+had been disabled, not a persistent cost in the live-editor overlay. The final
+route was verified from a trace log showing repeated interop dispatch and
+copy-back operations; the overlay alone would not prove that native FSR2 was
+replaced. Persistent file logging is disabled in the cleaned runtime.
 
-For the follow-up FSR4 interop experiment, change `VulkanUpscaler` in
-`OptiScaler.ini` from `fsr31` to `fsr31_12` and restart. The watermark is
-enabled to distinguish a real FSR4 model from OptiScaler's internal FSR3
-fallback. Keep this experiment out of the live installation.
+Native Vulkan FSR3.1 context creation succeeded but its first dispatch crashed
+inside `amd_fidelityfx_vk.dll`/the AMD Vulkan driver. The final route sets
+`VulkanUpscaler=fsr31_12`, which copies the Vulkan FSR2 inputs through
+OptiScaler's DX12 interop and dispatches the bundled FSR 4.1.1 upscaler. On the
+tested RX 9070 XT this sustained normal gameplay and editor use and shut down
+cleanly. `AutoExposure=true` avoids a runtime backend rebuild because the RTGL
+input has no exposure texture. The reproducible settings are recorded in
+`patches/optiscaler/StillHunger-settings.ini`; diagnostic file logging and the
+FSR4 watermark are disabled in the cleaned runtime.
