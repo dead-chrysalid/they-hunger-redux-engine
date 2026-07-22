@@ -1,0 +1,633 @@
+From ed2a73d21e43b73c3bcb94101631e4200ab294bc Mon Sep 17 00:00:00 2001
+From: John Doe <johndoe@example.com>
+Date: Wed, 22 Jul 2026 19:50:33 +0200
+Subject: [PATCH 5/5] Add live editor tone mapping controls
+
+---
+ Source/JsonParser.cpp           |  10 ++
+ Source/JsonParser.h             |  12 ++
+ Source/LiveEditor.cpp           | 272 +++++++++++++++++++++++++++++++-
+ Source/LiveEditor.h             |   5 +-
+ Source/LiveEditorLogic.h        |   9 ++
+ Source/SceneMeta.cpp            |  57 ++++++-
+ Source/SceneMeta.h              |   4 +-
+ Source/VulkanDevice.cpp         |   4 +-
+ Tests/EditorGltfParserTests.cpp |  37 +++++
+ Tests/LiveEditorLogicTests.cpp  |   9 ++
+ 10 files changed, 409 insertions(+), 10 deletions(-)
+
+diff --git a/Source/JsonParser.cpp b/Source/JsonParser.cpp
+index 9edf04b..5e3c1a6 100644
+--- a/Source/JsonParser.cpp
++++ b/Source/JsonParser.cpp
+@@ -282,6 +282,16 @@ JSON_TYPE( RTGL1::SceneMeta )
+     , "volumeLightMultiplier", &T::volumeLightMultiplier
+     , "volumeAmbient", &T::volumeAmbient
+     , "volumeUnderwaterColor", &T::volumeUnderwaterColor
++    , "tonemapDisableEyeAdaptation", &T::tonemapDisableEyeAdaptation
++    , "tonemapEv100Min", &T::tonemapEv100Min
++    , "tonemapEv100Max", &T::tonemapEv100Max
++    , "tonemapWhitePoint", &T::tonemapWhitePoint
++    , "tonemapSaturation", &T::tonemapSaturation
++    , "tonemapCrosstalk", &T::tonemapCrosstalk
++    , "bloomIntensity", &T::bloomIntensity
++    , "bloomInputThreshold", &T::bloomInputThreshold
++    , "bloomEmissionMultiplier", &T::bloomEmissionMultiplier
++    , "bloomLensDirtIntensity", &T::bloomLensDirtIntensity
+ JSON_TYPE_END;
+ JSON_TYPE( RTGL1::SceneMetaArray )
+     "array", &T::array
+diff --git a/Source/JsonParser.h b/Source/JsonParser.h
+index a4e910d..5df0ea5 100644
+--- a/Source/JsonParser.h
++++ b/Source/JsonParser.h
+@@ -138,6 +138,18 @@ struct SceneMeta
+ 
+     std::optional< std::array< float, 3 > > volumeAmbient;
+     std::optional< std::array< float, 3 > > volumeUnderwaterColor;
++
++    std::optional< bool > tonemapDisableEyeAdaptation;
++    std::optional< float > tonemapEv100Min;
++    std::optional< float > tonemapEv100Max;
++    std::optional< float > tonemapWhitePoint;
++    std::optional< std::array< float, 3 > > tonemapSaturation;
++    std::optional< std::array< float, 3 > > tonemapCrosstalk;
++
++    std::optional< float > bloomIntensity;
++    std::optional< float > bloomInputThreshold;
++    std::optional< float > bloomEmissionMultiplier;
++    std::optional< float > bloomLensDirtIntensity;
+ };
+ 
+ struct SceneMetaArray
+diff --git a/Source/LiveEditor.cpp b/Source/LiveEditor.cpp
+index 6d8a8b8..d4f8e98 100644
+--- a/Source/LiveEditor.cpp
++++ b/Source/LiveEditor.cpp
+@@ -3,6 +3,7 @@
+ 
+ #include "LiveEditor.h"
+ 
++#include "DrawFrameInfo.h"
+ #include "GltfImporter.h"
+ #include "Matrix.h"
+ #include "Rasterizer.h"
+@@ -1393,6 +1394,18 @@ void RTGL1::LiveEditor::DrawWorkspace( const RgDrawFrameInfo& drawInfo,
+             DrawAtmospherePanel( sceneMeta );
+             ImGui::EndTabItem();
+         }
++        if( ImGui::BeginTabItem( "Tone mapping",
++                                 nullptr,
++                                 requestedTab == WorkspaceTab::Tonemapping
++                                     ? ImGuiTabItemFlags_SetSelected
++                                     : ImGuiTabItemFlags_None ) )
++        {
++            activeTab = WorkspaceTab::Tonemapping;
++            live_editor_logic::ConsumeDeferredTab(
++                requestedTab, WorkspaceTab::Tonemapping, WorkspaceTab::None );
++            DrawTonemappingPanel( drawInfo, sceneMeta );
++            ImGui::EndTabItem();
++        }
+         if( ImGui::BeginTabItem( "Textures",
+                                  nullptr,
+                                  requestedTab == WorkspaceTab::Textures
+@@ -1679,7 +1692,7 @@ void RTGL1::LiveEditor::PasteSelectedLight( Scene& scene )
+     ShowVolumetricChange( previousVolumetric );
+ }
+ 
+-void RTGL1::LiveEditor::UndoAtmosphere( SceneMetaManager& manager, bool redo )
++void RTGL1::LiveEditor::UndoSceneSettings( SceneMetaManager& manager, bool redo )
+ {
+     if( !scenesDocument ) return;
+     std::string error;
+@@ -1692,8 +1705,8 @@ void RTGL1::LiveEditor::UndoAtmosphere( SceneMetaManager& manager, bool redo )
+         sceneEdit = manager.Access( currentMap ).value_or( SceneMeta{} );
+         sceneEdit.sceneName = currentMap;
+         manager.SetLiveOverride( currentMap, sceneEdit );
+-        statusMessage = redo ? "Redid atmosphere action and saved"
+-                             : "Undid atmosphere action and saved";
++        statusMessage = redo ? "Redid scene settings action and saved"
++                             : "Undid scene settings action and saved";
+     }
+     else if( !error.empty() )
+     {
+@@ -1781,14 +1794,18 @@ void RTGL1::LiveEditor::HandleHotkeys( Scene& scene,
+     if( control && ImGui::IsKeyPressed( ImGuiKey_Z, false ) )
+     {
+         if( activeTab == WorkspaceTab::Lights ) UndoLights( scene );
+-        if( activeTab == WorkspaceTab::Atmosphere ) UndoAtmosphere( sceneMeta, false );
++        if( activeTab == WorkspaceTab::Atmosphere ||
++            activeTab == WorkspaceTab::Tonemapping )
++            UndoSceneSettings( sceneMeta, false );
+         if( activeTab == WorkspaceTab::Textures )
+             UndoTexture( textureMeta, sceneImportExport, false );
+     }
+     if( control && ImGui::IsKeyPressed( ImGuiKey_Y, false ) )
+     {
+         if( activeTab == WorkspaceTab::Lights ) RedoLights( scene );
+-        if( activeTab == WorkspaceTab::Atmosphere ) UndoAtmosphere( sceneMeta, true );
++        if( activeTab == WorkspaceTab::Atmosphere ||
++            activeTab == WorkspaceTab::Tonemapping )
++            UndoSceneSettings( sceneMeta, true );
+         if( activeTab == WorkspaceTab::Textures )
+             UndoTexture( textureMeta, sceneImportExport, true );
+     }
+@@ -2158,7 +2175,7 @@ bool RTGL1::LiveEditor::SaveSceneField( std::string_view field,
+         hasUnsavedChanges = true;
+         return false;
+     }
+-    statusMessage = "Saved atmosphere action";
++    statusMessage = "Saved scene settings action";
+     return true;
+ }
+ 
+@@ -2273,6 +2290,249 @@ void RTGL1::LiveEditor::DrawAtmospherePanel( SceneMetaManager& manager )
+     optionalColor( "Underwater tint", "volumeUnderwaterColor", sceneEdit.volumeUnderwaterColor );
+ }
+ 
++void RTGL1::LiveEditor::DrawTonemappingPanel( const RgDrawFrameInfo& drawInfo,
++                                              SceneMetaManager& manager )
++{
++    const auto& tonemapping = AccessParams< RgDrawFrameTonemappingParams >( drawInfo );
++    const auto& bloom = AccessParams< RgDrawFrameBloomParams >( drawInfo );
++    const auto asArray = []( const RgFloat3D& value ) {
++        return std::array{ value.data[ 0 ], value.data[ 1 ], value.data[ 2 ] };
++    };
++    auto reloadEditorValue = [ & ] {
++        manager.ClearLiveOverrides();
++        manager.OnFileChanged( FileType::JSON, manager.GetPath() );
++        sceneEdit = manager.Access( currentMap ).value_or( SceneMeta{} );
++        sceneEdit.sceneName = currentMap;
++        manager.SetLiveOverride( currentMap, sceneEdit );
++    };
++    if( scenesDocument )
++    {
++        std::string error;
++        ImGui::BeginDisabled( !scenesDocument->CanUndo() );
++        if( ImGui::Button( "Undo tone mapping" ) )
++        {
++            if( scenesDocument->Undo( ValidateScenes, error ) )
++            {
++                reloadEditorValue();
++                statusMessage = "Undid scene settings action and saved";
++            }
++            else if( !error.empty() ) statusMessage = error;
++        }
++        ImGui::EndDisabled();
++        ImGui::SameLine();
++        ImGui::BeginDisabled( !scenesDocument->CanRedo() );
++        if( ImGui::Button( "Redo tone mapping" ) )
++        {
++            if( scenesDocument->Redo( ValidateScenes, error ) )
++            {
++                reloadEditorValue();
++                statusMessage = "Redid scene settings action and saved";
++            }
++            else if( !error.empty() ) statusMessage = error;
++        }
++        ImGui::EndDisabled();
++    }
++
++    auto optionalBool = [ & ]( const char* label,
++                               const char* field,
++                               std::optional< bool >& value,
++                               bool defaultValue,
++                               const char* tooltip ) {
++        bool used = value.has_value();
++        ImGui::PushID( field );
++        if( ImGui::Checkbox( "Used", &used ) )
++        {
++            value = used ? std::optional< bool >( defaultValue ) : std::nullopt;
++            manager.SetLiveOverride( currentMap, sceneEdit );
++            const std::string json = value ? ( *value ? "true" : "false" ) : "";
++            SaveSceneField( field,
++                            value ? std::optional< std::string_view >( json ) : std::nullopt );
++        }
++        ImGui::SameLine();
++        ImGui::BeginDisabled( !used );
++        bool edit = value.value_or( defaultValue );
++        if( ImGui::Checkbox( label, &edit ) )
++        {
++            value = edit;
++            manager.SetLiveOverride( currentMap, sceneEdit );
++            SaveSceneField( field, edit ? "true" : "false" );
++        }
++        if( ImGui::IsItemHovered( ImGuiHoveredFlags_AllowWhenDisabled ) )
++            ImGui::SetTooltip( "%s", tooltip );
++        ImGui::EndDisabled();
++        ImGui::PopID();
++    };
++    auto optionalFloat = [ & ]( const char* label,
++                                const char* field,
++                                std::optional< float >& value,
++                                float defaultValue,
++                                float minimum,
++                                float maximum,
++                                const char* tooltip ) {
++        bool used = value.has_value();
++        ImGui::PushID( field );
++        if( ImGui::Checkbox( "Used", &used ) )
++        {
++            value = used ? std::optional< float >( std::clamp( defaultValue,
++                                                               minimum,
++                                                               maximum ) )
++                         : std::nullopt;
++            manager.SetLiveOverride( currentMap, sceneEdit );
++            const std::string json = value ? JsonFloat( *value ) : std::string{};
++            SaveSceneField( field,
++                            value ? std::optional< std::string_view >( json ) : std::nullopt );
++        }
++        ImGui::SameLine();
++        ImGui::BeginDisabled( !used );
++        float edit = value.value_or( defaultValue );
++        if( ImGui::DragFloat( label,
++                              &edit,
++                              std::max( ( maximum - minimum ) / 500.0f, 0.001f ),
++                              minimum,
++                              maximum ) )
++        {
++            if( ImGui::IsItemActivated() && scenesDocument ) scenesDocument->BeginAction();
++            value = std::clamp( edit, minimum, maximum );
++            manager.SetLiveOverride( currentMap, sceneEdit );
++        }
++        if( ImGui::IsItemHovered( ImGuiHoveredFlags_AllowWhenDisabled ) )
++            ImGui::SetTooltip( "%s", tooltip );
++        if( ImGui::IsItemDeactivatedAfterEdit() && value )
++        {
++            const std::string json = JsonFloat( *value );
++            SaveSceneField( field, json );
++        }
++        ImGui::EndDisabled();
++        ImGui::PopID();
++    };
++    auto optionalVector = [ & ]( const char* label,
++                                 const char* field,
++                                 std::optional< std::array< float, 3 > >& value,
++                                 std::array< float, 3 > defaultValue,
++                                 float minimum,
++                                 float maximum,
++                                 bool normalizeCrosstalk,
++                                 const char* tooltip ) {
++        bool used = value.has_value();
++        ImGui::PushID( field );
++        if( ImGui::Checkbox( "Used", &used ) )
++        {
++            value = used ? std::optional( defaultValue ) : std::nullopt;
++            manager.SetLiveOverride( currentMap, sceneEdit );
++            const std::string json = value ? JsonArray( *value ) : std::string{};
++            SaveSceneField( field,
++                            value ? std::optional< std::string_view >( json ) : std::nullopt );
++        }
++        ImGui::SameLine();
++        ImGui::BeginDisabled( !used );
++        auto edit = value.value_or( defaultValue );
++        if( ImGui::DragFloat3( label, edit.data(), 0.01f, minimum, maximum ) )
++        {
++            if( ImGui::IsItemActivated() && scenesDocument ) scenesDocument->BeginAction();
++            for( float& channel : edit ) channel = std::clamp( channel, minimum, maximum );
++            if( normalizeCrosstalk )
++                edit = live_editor_logic::NormalizeCrosstalk( edit );
++            value = edit;
++            manager.SetLiveOverride( currentMap, sceneEdit );
++        }
++        if( ImGui::IsItemHovered( ImGuiHoveredFlags_AllowWhenDisabled ) )
++            ImGui::SetTooltip( "%s", tooltip );
++        if( ImGui::IsItemDeactivatedAfterEdit() && value )
++        {
++            const std::string json = JsonArray( *value );
++            SaveSceneField( field, json );
++        }
++        ImGui::EndDisabled();
++        ImGui::PopID();
++    };
++
++    ImGui::TextWrapped( "Unused values inherit the current renderer cvars. Changes preview live and save when an interaction ends." );
++
++    if( ImGui::CollapsingHeader( "Exposure", ImGuiTreeNodeFlags_DefaultOpen ) )
++    {
++        optionalBool(
++            "Freeze eye adaptation",
++            "tonemapDisableEyeAdaptation",
++            sceneEdit.tonemapDisableEyeAdaptation,
++            tonemapping.disableEyeAdaptation != 0,
++            "Stops updating the measured scene luminance at its current value. This is not a manual exposure control." );
++        optionalFloat( "Minimum EV100",
++                       "tonemapEv100Min",
++                       sceneEdit.tonemapEv100Min,
++                       tonemapping.ev100Min,
++                       -3.0f,
++                       tonemapping.ev100Max,
++                       "Brightest exposure the adaptation range may select. Lower EV100 produces a brighter image." );
++        optionalFloat( "Maximum EV100",
++                       "tonemapEv100Max",
++                       sceneEdit.tonemapEv100Max,
++                       tonemapping.ev100Max,
++                       tonemapping.ev100Min,
++                       16.0f,
++                       "Darkest exposure the adaptation range may select. Higher EV100 produces a darker image." );
++        optionalFloat( "White point",
++                       "tonemapWhitePoint",
++                       sceneEdit.tonemapWhitePoint,
++                       tonemapping.luminanceWhitePoint,
++                       0.01f,
++                       1000.0f,
++                       "Luminance mapped to display white. Larger values preserve more highlight detail." );
++    }
++
++    if( ImGui::CollapsingHeader( "Color mapping", ImGuiTreeNodeFlags_DefaultOpen ) )
++    {
++        optionalVector( "RGB saturation adjustment",
++                        "tonemapSaturation",
++                        sceneEdit.tonemapSaturation,
++                        asArray( tonemapping.saturation ),
++                        -1.0f,
++                        1.0f,
++                        false,
++                        "Per-channel saturation adjustment: -1 removes that channel's saturation, 0 is neutral, and positive values increase it." );
++        optionalVector( "RGB highlight crosstalk",
++                        "tonemapCrosstalk",
++                        sceneEdit.tonemapCrosstalk,
++                        asArray( tonemapping.crosstalk ),
++                        0.001f,
++                        1.0f,
++                        true,
++                        "Controls how saturated highlights roll toward white. The strongest channel is normalized to 1; lower companion channels preserve more colored highlights." );
++    }
++
++    if( ImGui::CollapsingHeader( "Bloom", ImGuiTreeNodeFlags_DefaultOpen ) )
++    {
++        ImGui::TextWrapped( "Bloom intensity 0 disables the bloom pass for this map." );
++        optionalFloat( "Intensity",
++                       "bloomIntensity",
++                       sceneEdit.bloomIntensity,
++                       bloom.bloomIntensity,
++                       0.0f,
++                       10.0f,
++                       "Overall strength of the blurred highlight contribution." );
++        optionalFloat( "Input threshold",
++                       "bloomInputThreshold",
++                       sceneEdit.bloomInputThreshold,
++                       bloom.inputThreshold,
++                       0.0f,
++                       100.0f,
++                       "Minimum scene brightness that contributes to bloom." );
++        optionalFloat( "Emission multiplier",
++                       "bloomEmissionMultiplier",
++                       sceneEdit.bloomEmissionMultiplier,
++                       bloom.bloomEmissionMultiplier,
++                       0.0f,
++                       1000.0f,
++                       "Extra bloom weight applied to emissive materials." );
++        optionalFloat( "Lens dirt intensity",
++                       "bloomLensDirtIntensity",
++                       sceneEdit.bloomLensDirtIntensity,
++                       bloom.lensDirtIntensity,
++                       0.0f,
++                       10.0f,
++                       "Strength of the lens-dirt texture modulation. Set to 0 to disable it." );
++    }
++}
++
+ bool RTGL1::LiveEditor::SaveTextureField( std::string_view texture,
+                                           bool perScene,
+                                           std::string_view field,
+diff --git a/Source/LiveEditor.h b/Source/LiveEditor.h
+index d5fd48f..3298378 100644
+--- a/Source/LiveEditor.h
++++ b/Source/LiveEditor.h
+@@ -55,6 +55,7 @@ private:
+         None,
+         Lights,
+         Atmosphere,
++        Tonemapping,
+         Textures,
+         Surface,
+     };
+@@ -103,6 +104,8 @@ private:
+                         TextureManager& textureManager );
+     void DrawLightPanel( const RgDrawFrameInfo& drawInfo, Scene& scene );
+     void DrawAtmospherePanel( SceneMetaManager& manager );
++    void DrawTonemappingPanel( const RgDrawFrameInfo& drawInfo,
++                               SceneMetaManager& manager );
+     void DrawTexturePanel( TextureMetaManager& manager,
+                            TextureManager& textures,
+                            SceneImportExport& sceneImportExport,
+@@ -129,7 +132,7 @@ private:
+     void UndoLights( Scene& scene );
+     void RedoLights( Scene& scene );
+     void RefreshUnsavedStatus();
+-    void UndoAtmosphere( SceneMetaManager& manager, bool redo );
++    void UndoSceneSettings( SceneMetaManager& manager, bool redo );
+     void UndoTexture( TextureMetaManager& manager,
+                       SceneImportExport& sceneImportExport,
+                       bool redo );
+diff --git a/Source/LiveEditorLogic.h b/Source/LiveEditorLogic.h
+index b0fab2d..264a40c 100644
+--- a/Source/LiveEditorLogic.h
++++ b/Source/LiveEditorLogic.h
+@@ -6,6 +6,7 @@
+ #include <RTGL1/RTGL1.h>
+ 
+ #include <algorithm>
++#include <array>
+ #include <cmath>
+ #include <cstddef>
+ #include <limits>
+@@ -67,6 +68,14 @@ inline float IntegerIntensity( float intensity )
+     return std::trunc( std::max( 0.0f, intensity ) );
+ }
+ 
++inline std::array< float, 3 > NormalizeCrosstalk( std::array< float, 3 > value )
++{
++    for( float& channel : value ) channel = std::clamp( channel, 0.001f, 1.0f );
++    const float peak = std::max( { value[ 0 ], value[ 1 ], value[ 2 ] } );
++    for( float& channel : value ) channel /= peak;
++    return value;
++}
++
+ template< typename Tab >
+ bool ConsumeDeferredTab( Tab& requested, Tab opened, Tab none )
+ {
+diff --git a/Source/SceneMeta.cpp b/Source/SceneMeta.cpp
+index ca80b8a..4802ef7 100644
+--- a/Source/SceneMeta.cpp
++++ b/Source/SceneMeta.cpp
+@@ -20,6 +20,7 @@
+ 
+ #include "SceneMeta.h"
+ 
++#include "LiveEditorLogic.h"
+ #include "Utils.h"
+ 
+ RTGL1::SceneMetaManager::SceneMetaManager( std::filesystem::path filepath )
+@@ -31,7 +32,9 @@ RTGL1::SceneMetaManager::SceneMetaManager( std::filesystem::path filepath )
+ 
+ void RTGL1::SceneMetaManager::Modify( std::string_view             sceneName,
+                                       RgDrawFrameVolumetricParams& volumetric,
+-                                      RgDrawFrameSkyParams&        sky ) const
++                                      RgDrawFrameSkyParams&        sky,
++                                      RgDrawFrameTonemappingParams& tonemapping,
++                                      RgDrawFrameBloomParams&      bloom ) const
+ {
+     auto live = liveData.find( std::string( sceneName ) );
+     auto iter = data.find( std::string( sceneName ) );
+@@ -82,6 +85,58 @@ void RTGL1::SceneMetaManager::Modify( std::string_view             sceneName,
+         volumetric.allowTintUnderwater = true;
+         volumetric.underwaterColor     = { RG_ACCESS_VEC3( *m.volumeUnderwaterColor ) };
+     }
++
++    if( m.tonemapDisableEyeAdaptation )
++    {
++        tonemapping.disableEyeAdaptation = *m.tonemapDisableEyeAdaptation;
++    }
++    if( m.tonemapEv100Min )
++    {
++        tonemapping.ev100Min = std::clamp( *m.tonemapEv100Min, -3.0f, 16.0f );
++    }
++    if( m.tonemapEv100Max )
++    {
++        tonemapping.ev100Max = std::clamp( *m.tonemapEv100Max, -3.0f, 16.0f );
++    }
++    if( tonemapping.ev100Min > tonemapping.ev100Max )
++    {
++        std::swap( tonemapping.ev100Min, tonemapping.ev100Max );
++    }
++    if( m.tonemapWhitePoint )
++    {
++        tonemapping.luminanceWhitePoint =
++            std::clamp( *m.tonemapWhitePoint, 0.01f, 1000.0f );
++    }
++    if( m.tonemapSaturation )
++    {
++        auto value = *m.tonemapSaturation;
++        for( float& channel : value ) channel = std::clamp( channel, -1.0f, 1.0f );
++        tonemapping.saturation = { RG_ACCESS_VEC3( value ) };
++    }
++    if( m.tonemapCrosstalk )
++    {
++        const auto value = live_editor_logic::NormalizeCrosstalk( *m.tonemapCrosstalk );
++        tonemapping.crosstalk = { RG_ACCESS_VEC3( value ) };
++    }
++
++    if( m.bloomIntensity )
++    {
++        bloom.bloomIntensity = std::clamp( *m.bloomIntensity, 0.0f, 10.0f );
++    }
++    if( m.bloomInputThreshold )
++    {
++        bloom.inputThreshold = std::clamp( *m.bloomInputThreshold, 0.0f, 100.0f );
++    }
++    if( m.bloomEmissionMultiplier )
++    {
++        bloom.bloomEmissionMultiplier =
++            std::clamp( *m.bloomEmissionMultiplier, 0.0f, 1000.0f );
++    }
++    if( m.bloomLensDirtIntensity )
++    {
++        bloom.lensDirtIntensity =
++            std::clamp( *m.bloomLensDirtIntensity, 0.0f, 10.0f );
++    }
+ }
+ 
+ auto RTGL1::SceneMetaManager::Access( std::string_view sceneName ) const
+diff --git a/Source/SceneMeta.h b/Source/SceneMeta.h
+index 79dcad0..c73da5a 100644
+--- a/Source/SceneMeta.h
++++ b/Source/SceneMeta.h
+@@ -43,7 +43,9 @@ public:
+ 
+     void Modify( std::string_view             sceneName,
+                  RgDrawFrameVolumetricParams& volumetric,
+-                 RgDrawFrameSkyParams&        sky ) const;
++                 RgDrawFrameSkyParams&        sky,
++                 RgDrawFrameTonemappingParams& tonemapping,
++                 RgDrawFrameBloomParams&      bloom ) const;
+ 
+     std::optional< SceneMeta > Access( std::string_view sceneName ) const;
+     void SetLiveOverride( std::string sceneName, SceneMeta value );
+diff --git a/Source/VulkanDevice.cpp b/Source/VulkanDevice.cpp
+index 43a1bc6..0ea34a0 100644
+--- a/Source/VulkanDevice.cpp
++++ b/Source/VulkanDevice.cpp
+@@ -912,7 +912,9 @@ void RTGL1::VulkanDevice::DrawFrame( const RgDrawFrameInfo* pOriginalInfo )
+         sceneMetaManager->Modify(
+             sceneImportExport->GetImportMapName(),
+             *AccessParamsForWrite< RgDrawFrameVolumetricParams >( modifiedCopy.info ),
+-            *AccessParamsForWrite< RgDrawFrameSkyParams >( modifiedCopy.info ) );
++            *AccessParamsForWrite< RgDrawFrameSkyParams >( modifiedCopy.info ),
++            *AccessParamsForWrite< RgDrawFrameTonemappingParams >( modifiedCopy.info ),
++            *AccessParamsForWrite< RgDrawFrameBloomParams >( modifiedCopy.info ) );
+ 
+         Dev_Override( modifiedCopy );
+     }
+diff --git a/Tests/EditorGltfParserTests.cpp b/Tests/EditorGltfParserTests.cpp
+index 7b7a900..d3e3802 100644
+--- a/Tests/EditorGltfParserTests.cpp
++++ b/Tests/EditorGltfParserTests.cpp
+@@ -87,6 +87,43 @@ int main( int argc, char** argv )
+     if( !regressionPassed )
+         return 1;
+ 
++    const auto scenesPath = std::filesystem::temp_directory_path() /
++                            ( "rtgl-editor-scenes-parser-" + std::to_string( stamp ) + ".json" );
++    {
++        std::ofstream file( scenesPath, std::ios::binary | std::ios::trunc );
++        file << R"({
++  "version": 0,
++  "array": [
++    {
++      "sceneName":"tone_test",
++      "tonemapDisableEyeAdaptation": true,
++      "tonemapEv100Min": 1.5,
++      "tonemapEv100Max": 8.25,
++      "tonemapWhitePoint": 12,
++      "tonemapSaturation": [-0.1, 0, 0.2],
++      "tonemapCrosstalk": [0.75, 1, 1],
++      "bloomIntensity": 0.8,
++      "bloomInputThreshold": 3,
++      "bloomEmissionMultiplier": 20,
++      "bloomLensDirtIntensity": 1.5
++    }
++  ]
++})";
++    }
++    const auto scenes = RTGL1::json_parser::ReadFileAs< RTGL1::SceneMetaArray >( scenesPath );
++    std::filesystem::remove( scenesPath, ignored );
++    if( !scenes || scenes->array.size() != 1 )
++        return 1;
++    const auto& tone = scenes->array.front();
++    if( tone.sceneName != "tone_test" || !tone.tonemapDisableEyeAdaptation ||
++        !*tone.tonemapDisableEyeAdaptation || tone.tonemapEv100Min != 1.5f ||
++        tone.tonemapEv100Max != 8.25f || tone.tonemapWhitePoint != 12.0f ||
++        !tone.tonemapSaturation || ( *tone.tonemapSaturation )[ 2 ] != 0.2f ||
++        !tone.tonemapCrosstalk || ( *tone.tonemapCrosstalk )[ 0 ] != 0.75f ||
++        tone.bloomIntensity != 0.8f || tone.bloomInputThreshold != 3.0f ||
++        tone.bloomEmissionMultiplier != 20.0f || tone.bloomLensDirtIntensity != 1.5f )
++        return 1;
++
+     if( argc > 1 && !VerifyParsedFile( argv[ 1 ], false ) )
+         return 1;
+ 
+diff --git a/Tests/LiveEditorLogicTests.cpp b/Tests/LiveEditorLogicTests.cpp
+index 0476a90..52b8b38 100644
+--- a/Tests/LiveEditorLogicTests.cpp
++++ b/Tests/LiveEditorLogicTests.cpp
+@@ -38,6 +38,15 @@ int main()
+     assert( IntegerIntensity( 160999.75f ) == 160999.0f );
+     assert( IntegerIntensity( -1.0f ) == 0.0f );
+ 
++    const auto crosstalk = NormalizeCrosstalk( { 0.375f, 0.5f, 0.25f } );
++    assert( std::abs( crosstalk[ 0 ] - 0.75f ) < 0.0001f );
++    assert( std::abs( crosstalk[ 1 ] - 1.0f ) < 0.0001f );
++    assert( std::abs( crosstalk[ 2 ] - 0.5f ) < 0.0001f );
++    const auto clampedCrosstalk = NormalizeCrosstalk( { 0.0f, 2.0f, -1.0f } );
++    assert( clampedCrosstalk[ 0 ] == 0.001f );
++    assert( clampedCrosstalk[ 1 ] == 1.0f );
++    assert( clampedCrosstalk[ 2 ] == 0.001f );
++
+     enum class Tab
+     {
+         None,
+-- 
+2.52.0.windows.1
+
