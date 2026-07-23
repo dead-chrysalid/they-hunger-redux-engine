@@ -336,6 +336,7 @@ enc_temp_folder/
 # Local dependency checkouts / SDK drops used for Windows builds
 /RTGL1/
 /SDL2_VC/
+/isolated/
 
 # Local build scratch logs
 /msbuild*.log

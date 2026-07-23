@@ -356,6 +356,125 @@ static const char *R_GetConfigName( void )
 #endif
 }
 
+#if XASH_RAYTRACING
+static cvar_t *rt_editor_active;
+static cvar_t *rt_editor_workspace;
+static cvar_t *rt_editor_unsaved;
+static cvar_t *rt_editor_map_serial;
+
+static void RT_EditorSyncCvars( const RgEditorStatus *status )
+{
+	if( !status ) return;
+	if( rt_editor_active ) gEngfuncs.Cvar_SetValue( "rt_editor_active", status->active ? 1.0f : 0.0f );
+	if( rt_editor_workspace ) gEngfuncs.Cvar_SetValue( "rt_editor_workspace", status->workspaceOpen ? 1.0f : 0.0f );
+	if( rt_editor_unsaved ) gEngfuncs.Cvar_SetValue( "rt_editor_unsaved", status->hasUnsavedChanges ? 1.0f : 0.0f );
+	if( rt_editor_map_serial ) gEngfuncs.Cvar_SetValue( "rt_editor_map_serial", (float)status->mapSerial );
+}
+
+static void RT_EditorGetStatusImpl( ref_editor_status_t *status )
+{
+	RgEditorStatus rgstatus = { 0 };
+	if( !status ) return;
+	memset( status, 0, sizeof( *status ));
+	if( !rg_instance || rgEditorGetStatus( rg_instance, &rgstatus ) != RG_RESULT_SUCCESS ) return;
+	status->available = rgstatus.available;
+	status->active = rgstatus.active;
+	status->workspaceOpen = rgstatus.workspaceOpen;
+	status->wantsInput = rgstatus.wantsInput;
+	status->wantsCursor = rgstatus.wantsCursor;
+	status->hasUnsavedChanges = rgstatus.hasUnsavedChanges;
+	status->mapSerial = rgstatus.mapSerial;
+	Q_strncpy( status->mapName, rgstatus.mapName, sizeof( status->mapName ) );
+	Q_strncpy( status->message, rgstatus.message, sizeof( status->message ) );
+	RT_EditorSyncCvars( &rgstatus );
+}
+
+static qboolean RT_EditorSetEnabledImpl( qboolean enabled )
+{
+	RgEditorStatus status = { 0 };
+	if( !rg_instance ) return false;
+	if( enabled )
+	{
+		if( gEngfuncs.pfnGetCvarFloat( "developer" ) <= 0.0f )
+		{
+			gEngfuncs.Con_Printf( "RT editor requires developer mode.\n" );
+			return false;
+		}
+		if( gEngfuncs.EngineGetParm( PARM_CONNSTATE, 0 ) != ca_active ||
+			gEngfuncs.EngineGetParm( PARM_PLAYING_DEMO, 0 ) ||
+			gEngfuncs.EngineGetParm( PARM_MAX_CLIENTS, 0 ) != 1 ||
+			!gEngfuncs.EngineGetParm( PARM_LOCAL_GAME, 0 ) )
+		{
+			gEngfuncs.Con_Printf( "RT editor is available only in an active local single-player map.\n" );
+			return false;
+		}
+	}
+	if( rgEditorSetEnabled( rg_instance, enabled ) != RG_RESULT_SUCCESS ) return false;
+	rgEditorGetStatus( rg_instance, &status );
+	RT_EditorSyncCvars( &status );
+	gEngfuncs.Con_Printf( "%s\n", enabled ? "RT editor enabled" : "RT editor disabled" );
+	return true;
+}
+
+static qboolean RT_EditorHandleInputImpl( const ref_editor_event_t *event )
+{
+	RgEditorInputEvent input = { 0 };
+	if( !event || !rg_instance ) return false;
+	input.type = (RgEditorInputType)event->type;
+	input.key = event->key;
+	input.down = event->down;
+	input.button = event->button;
+	input.modifiers = event->modifiers;
+	input.x = event->x;
+	input.y = event->y;
+	input.dx = event->dx;
+	input.dy = event->dy;
+	input.wheel = event->wheel;
+	Q_strncpy( input.text, event->text, sizeof( input.text ) );
+	return rgEditorSubmitInput( rg_instance, &input ) != 0;
+}
+
+static void RT_EditorToggle_f( void )
+{
+	ref_editor_status_t status;
+	RT_EditorGetStatusImpl( &status );
+	RT_EditorSetEnabledImpl( !status.active );
+}
+
+static void RT_EditorRetrySave_f( void )
+{
+	if( rg_instance ) rgEditorRetrySave( rg_instance );
+}
+
+void RT_EditorInit( void )
+{
+	// These are renderer-owned synchronization cvars, but they cannot use
+	// FCVAR_READ_ONLY: the public renderer API deliberately cannot mutate a
+	// read-only cvar and the client DLL must be able to observe their values.
+	rt_editor_active = gEngfuncs.Cvar_Get( "rt_editor_active", "0", FCVAR_SPONLY|FCVAR_UNLOGGED, "RT live editor active state" );
+	rt_editor_workspace = gEngfuncs.Cvar_Get( "rt_editor_workspace", "0", FCVAR_SPONLY|FCVAR_UNLOGGED, "RT live editor cursor workspace state" );
+	rt_editor_unsaved = gEngfuncs.Cvar_Get( "rt_editor_unsaved", "0", FCVAR_SPONLY|FCVAR_UNLOGGED, "RT live editor has unsaved changes" );
+	rt_editor_map_serial = gEngfuncs.Cvar_Get( "rt_editor_map_serial", "0", FCVAR_SPONLY|FCVAR_UNLOGGED, "RT live editor map generation" );
+	gEngfuncs.Cvar_Get( "rt_editor_speed", "500", FCVAR_ARCHIVE, "RT editor noclip speed in game units per second" );
+	gEngfuncs.Cmd_AddCommand( "rt_editor_toggle", RT_EditorToggle_f, "Toggle the developer RT live editor" );
+	gEngfuncs.Cmd_AddCommand( "rt_editor_retry_save", RT_EditorRetrySave_f, "Retry pending RT editor saves" );
+}
+
+void RT_EditorShutdown( void )
+{
+	if( rg_instance ) rgEditorSetEnabled( rg_instance, false );
+	gEngfuncs.Cmd_RemoveCommand( "rt_editor_toggle" );
+	gEngfuncs.Cmd_RemoveCommand( "rt_editor_retry_save" );
+	rt_editor_active = rt_editor_workspace = rt_editor_unsaved = rt_editor_map_serial = NULL;
+}
+#else
+void RT_EditorInit( void ) {}
+void RT_EditorShutdown( void ) {}
+#define RT_EditorSetEnabledImpl NULL
+#define RT_EditorHandleInputImpl NULL
+#define RT_EditorGetStatusImpl NULL
+#endif
+
 ref_interface_t gReffuncs =
 {
 	R_Init,
@@ -503,6 +622,10 @@ ref_interface_t gReffuncs =
 	VGUI_DrawQuad,
 	VGUI_GetTextureSizes,
 	VGUI_GenerateTexture,
+
+	RT_EditorSetEnabledImpl,
+	RT_EditorHandleInputImpl,
+	RT_EditorGetStatusImpl,
 };
 
 int EXPORT GetRefAPI( int version, ref_interface_t *funcs, ref_api_t *engfuncs, ref_globals_t *globals )

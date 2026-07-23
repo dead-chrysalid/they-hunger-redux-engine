@@ -49,6 +49,56 @@ void R_UpdateRefState( void )
 	refState.frametime = host.frametime;
 }
 
+void R_RTEditorGetStatus( ref_editor_status_t *status )
+{
+	if( !status )
+		return;
+
+	memset( status, 0, sizeof( *status ));
+	if( ref.initialized && ref.dllFuncs.RT_EditorGetStatus )
+		ref.dllFuncs.RT_EditorGetStatus( status );
+}
+
+qboolean R_RTEditorSetEnabled( qboolean enabled )
+{
+	if( enabled &&
+		( cls.state != ca_active || cls.demoplayback || cl.maxclients != 1 ||
+		  !Host_IsLocalGame() || !host_developer.value || cls.key_dest != key_game ))
+	{
+		Con_Printf( "RT editor is available only in an active developer single-player map with no menu or console open.\n" );
+		return false;
+	}
+
+	if( !ref.initialized || !ref.dllFuncs.RT_EditorSetEnabled )
+	{
+		if( enabled )
+			Con_Printf( "The active renderer does not support the RT live editor.\n" );
+		return false;
+	}
+
+	return ref.dllFuncs.RT_EditorSetEnabled( enabled );
+}
+
+qboolean R_RTEditorHandleInput( const ref_editor_event_t *event )
+{
+	if( !event || !ref.initialized || !ref.dllFuncs.RT_EditorHandleInput )
+		return false;
+
+	return ref.dllFuncs.RT_EditorHandleInput( event );
+}
+
+void R_RTEditorValidateState( void )
+{
+	ref_editor_status_t status;
+	R_RTEditorGetStatus( &status );
+	if( status.active &&
+		( cls.state != ca_active || cls.demoplayback || cl.maxclients != 1 ||
+		  !Host_IsLocalGame() || !host_developer.value || cls.key_dest != key_game ))
+	{
+		R_RTEditorSetEnabled( false );
+	}
+}
+
 void GL_RenderFrame( const ref_viewpass_t *rvp )
 {
 	R_UpdateRefState();
