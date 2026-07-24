@@ -287,8 +287,8 @@ void SV_MapBackground_f( void )
 
 	if( SV_Active() && !sv.background )
 	{
-		if( GameState->nextstate == STATE_RUNFRAME )
-			Con_Printf( S_ERROR "can't set background map while game is active\n" );
+		// The menu may refresh its background list after a command-line map has
+		// already started. The request is harmless and intentionally ignored.
 		return;
 	}
 
