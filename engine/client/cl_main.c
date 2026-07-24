@@ -2850,7 +2850,7 @@ void CL_InitLocal( void )
 	rcon_client_password = Cvar_Get( "rcon_password", "", FCVAR_PRIVILEGED, "remote control client password" );
 	rcon_address = Cvar_Get( "rcon_address", "", FCVAR_PRIVILEGED, "remote control address" );
 
-	cl_trace_messages = Cvar_Get( "cl_trace_messages", "0", FCVAR_ARCHIVE|FCVAR_CHEAT, "enable message names tracing (good for developers)");
+	cl_trace_messages = Cvar_Get( "cl_trace_messages", "0", FCVAR_CHEAT, "enable message names tracing (good for developers)");
 
 	// userinfo
 	cl_nopred = Cvar_Get( "cl_nopred", "0", FCVAR_ARCHIVE|FCVAR_USERINFO, "disable client movement prediction" );
