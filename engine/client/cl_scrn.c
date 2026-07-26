@@ -799,6 +799,7 @@ void SCR_VidInit( void )
 	VGui_Startup( libpath, refState.width, refState.height );
 
 	CL_ClearSpriteTextures(); // now all hud sprites are invalid
+	CL_HudTextVidInit();
 
 	// vid_state has changed
 	if( gameui.hInstance ) gameui.dllFuncs.pfnVidInit();
@@ -869,6 +870,7 @@ void SCR_Shutdown( void )
 	Cmd_RemoveCommand( "skyname" );
 	Cmd_RemoveCommand( "viewpos" );
 	UI_SetActiveMenu( false );
+	CL_HudTextShutdown();
 	UI_UnloadProgs();
 
 	scr_init = false;

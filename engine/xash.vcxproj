@@ -145,6 +145,8 @@
     <ClInclude Include="client\client.h" />
     <ClInclude Include="client\cl_tent.h" />
     <ClInclude Include="client\input.h" />
+    <ClInclude Include="client\hud_text.h" />
+    <ClInclude Include="client\stb_truetype.h" />
     <ClInclude Include="client\ref_common.h" />
     <ClInclude Include="client\sound.h" />
     <ClInclude Include="client\vgui\vgui_draw.h" />
@@ -221,6 +223,7 @@
     <ClCompile Include="client\cl_view.c" />
     <ClCompile Include="client\console.c" />
     <ClCompile Include="client\input.c" />
+    <ClCompile Include="client\hud_text.c" />
     <ClCompile Include="client\in_joy.c" />
     <ClCompile Include="client\in_touch.c" />
     <ClCompile Include="client\keys.c" />
