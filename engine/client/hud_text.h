@@ -12,6 +12,7 @@ void CL_HudTextInfo_f( void );
 void CL_HudTextTest_f( void );
 void CL_HudTextDrawTest( void );
 qboolean CL_HudTextReady( void );
+qboolean CL_HudTextStyleReady( hud_text_style_t style );
 int CL_HudTextDrawCharacter( hud_text_style_t style, int x, int y, int ch, int r, int g, int b, int a );
 int CL_HudTextGetHeight( hud_text_style_t style );
 int CL_HudTextGetCharWidth( hud_text_style_t style, int ch );

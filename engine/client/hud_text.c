@@ -42,6 +42,7 @@ typedef struct hud_text_font_s
 	int pixelSize;
 	int height;
 	int ascent;
+	unsigned int skippedGlyphs;
 	hud_text_backend_t backend;
 #if XASH_WIN32
 	HANDLE fontResource;
@@ -90,7 +91,7 @@ static unsigned int hudTextStbFallbackGlyphs;
 static qboolean hudTextReady;
 static qboolean hudTextTestVisible;
 
-static qboolean CL_HudTextPrewarmAtlases( void );
+static qboolean CL_HudTextPrewarmStyle( hud_text_style_t style );
 
 static hud_text_style_t CL_HudTextNormalizeStyle( hud_text_style_t style )
 {
@@ -519,14 +520,19 @@ void CL_HudTextVidInit( void )
 			hudTextFonts[i].backend == HUD_TEXT_BACKEND_WIN32_GDI ? "Win32 GDI hinting" : "stb_truetype" );
 	}
 
-	hudTextReady = hudTextFonts[HUD_TEXT_STYLE_SMALL].ready
-		&& hudTextFonts[HUD_TEXT_STYLE_MEDIUM].ready
-		&& hudTextFonts[HUD_TEXT_STYLE_LARGE].ready;
-	if( hudTextReady && !CL_HudTextPrewarmAtlases() )
+	hudTextReady = false;
+	for( i = HUD_TEXT_STYLE_SMALL; i <= HUD_TEXT_STYLE_LARGE; i++ )
 	{
-		Con_Printf( S_WARN "HUD text: unable to build immutable font atlases, using legacy bitmap fallback\n" );
-		CL_HudTextClearGlyphs();
-		hudTextReady = false;
+		if( !hudTextFonts[i].ready )
+			continue;
+		if( !CL_HudTextPrewarmStyle((hud_text_style_t)i ))
+		{
+			Con_Printf( S_WARN "HUD text: unable to build immutable atlas for style %i, "
+				"using legacy bitmap fallback for that style\n", i );
+			hudTextFonts[i].ready = false;
+			continue;
+		}
+		hudTextReady = true;
 	}
 }
 
@@ -540,6 +546,12 @@ void CL_HudTextShutdown( void )
 qboolean CL_HudTextReady( void )
 {
 	return hudTextReady;
+}
+
+qboolean CL_HudTextStyleReady( hud_text_style_t style )
+{
+	style = CL_HudTextNormalizeStyle( style );
+	return hudTextFonts[style].ready;
 }
 
 static unsigned int CL_HudTextGlyphHash( int style, int ch )
@@ -868,32 +880,34 @@ static qboolean CL_HudTextUploadGlyph( hud_text_font_t *font, hud_text_glyph_t *
 	return true;
 }
 
-static qboolean CL_HudTextPrewarmAtlases( void )
+static qboolean CL_HudTextPrewarmStyle( hud_text_style_t style )
 {
+	hud_text_font_t *font = &hudTextFonts[style];
 	hud_text_glyph_t *glyph;
-	int style;
 	int ch;
 	int i;
 
-	for( style = HUD_TEXT_STYLE_SMALL; style <= HUD_TEXT_STYLE_LARGE; style++ )
+	for( ch = 32; ch <= 126; ch++ )
 	{
-		for( ch = 32; ch <= 126; ch++ )
+		glyph = CL_HudTextFindGlyph( style, ch, true );
+		if( glyph && ch != ' ' && !CL_HudTextUploadGlyph( font, glyph ))
 		{
-			glyph = CL_HudTextFindGlyph( style, ch, true );
-			if( glyph && ch != ' ' && !CL_HudTextUploadGlyph( &hudTextFonts[style], glyph ))
-				return false;
+			font->skippedGlyphs++;
 		}
-		for( ch = 160; ch <= 255; ch++ )
+	}
+	for( ch = 160; ch <= 255; ch++ )
+	{
+		glyph = CL_HudTextFindGlyph( style, ch, true );
+		if( glyph && ch != 160 && !CL_HudTextUploadGlyph( font, glyph ))
 		{
-			glyph = CL_HudTextFindGlyph( style, ch, true );
-			if( glyph && ch != 160 && !CL_HudTextUploadGlyph( &hudTextFonts[style], glyph ))
-				return false;
+			font->skippedGlyphs++;
 		}
 	}
 
 	for( i = 0; i < HUD_TEXT_MAX_ATLAS_PAGES; i++ )
 	{
-		if( hudTextAtlasPages[i].occupied && !CL_HudTextUploadAtlasPage( &hudTextAtlasPages[i] ))
+		if( hudTextAtlasPages[i].occupied && hudTextAtlasPages[i].style == (int)style
+			&& !CL_HudTextUploadAtlasPage( &hudTextAtlasPages[i] ))
 			return false;
 	}
 
@@ -909,6 +923,7 @@ void CL_HudTextInfo_f( void )
 	hud_text_font_t *font;
 	int glyphCount = 0;
 	int pageCount = 0;
+	int readyCount = 0;
 	int i;
 
 	for( i = 0; i < HUD_TEXT_GLYPH_CACHE_SIZE; i++ )
@@ -921,10 +936,15 @@ void CL_HudTextInfo_f( void )
 		if( hudTextAtlasPages[i].occupied )
 			pageCount++;
 	}
+	for( i = HUD_TEXT_STYLE_SMALL; i <= HUD_TEXT_STYLE_LARGE; i++ )
+	{
+		if( hudTextFonts[i].ready )
+			readyCount++;
+	}
 
-	Con_Printf( "HUD TrueType: %s, ready: %s, atlas: %ix%i, padding: %ipx\n",
+	Con_Printf( "HUD TrueType: %s, ready: %i/3 styles, atlas: %ix%i, padding: %ipx\n",
 		hud_truetype && hud_truetype->value ? "enabled" : "disabled",
-		hudTextReady ? "yes" : "no", HUD_TEXT_ATLAS_SIZE, HUD_TEXT_ATLAS_SIZE,
+		readyCount, HUD_TEXT_ATLAS_SIZE, HUD_TEXT_ATLAS_SIZE,
 		HUD_TEXT_ATLAS_GLYPH_PAD );
 	Con_Printf( "HUD text cache: %i glyphs, %i pages, %u per-glyph stb fallbacks, test overlay: %s\n",
 		glyphCount, pageCount, hudTextStbFallbackGlyphs, hudTextTestVisible ? "on" : "off" );
@@ -933,15 +953,19 @@ void CL_HudTextInfo_f( void )
 	{
 		font = &hudTextFonts[i];
 #if XASH_WIN32
-		Con_Printf( "  %s: %s, design %i, raster %ipx, height %i, font %s%s%s\n",
+		Con_Printf( "  %s: %s, %s, design %i, raster %ipx, height %i, "
+			"%u skipped prewarm glyphs, font %s%s%s\n",
 			styleNames[i],
+			font->ready ? "ready" : "fallback",
 			font->backend == HUD_TEXT_BACKEND_WIN32_GDI ? "Win32 GDI hinted" : "stb_truetype",
-			font->designSize, font->pixelSize, font->height, font->path,
+			font->designSize, font->pixelSize, font->height, font->skippedGlyphs, font->path,
 			font->faceName[0] ? ", face " : "",
 			font->faceName[0] ? font->faceName : "" );
 #else
-		Con_Printf( "  %s: stb_truetype, design %i, raster %ipx, height %i, font %s\n",
-			styleNames[i], font->designSize, font->pixelSize, font->height, font->path );
+		Con_Printf( "  %s: %s, stb_truetype, design %i, raster %ipx, height %i, "
+			"%u skipped prewarm glyphs, font %s\n",
+			styleNames[i], font->ready ? "ready" : "fallback", font->designSize,
+			font->pixelSize, font->height, font->skippedGlyphs, font->path );
 #endif
 	}
 }
