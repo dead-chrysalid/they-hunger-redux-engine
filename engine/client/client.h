@@ -879,6 +879,8 @@ void SCR_AddDirtyPoint( int x, int y );
 void SCR_InstallParticlePalette( void );
 void SCR_EndLoadingPlaque( void );
 void SCR_RegisterTextures( void );
+void CL_HudTextVidInit( void );
+void CL_HudTextShutdown( void );
 void SCR_LoadCreditsFont( void );
 void SCR_MakeScreenShot( void );
 void SCR_MakeLevelShot( void );

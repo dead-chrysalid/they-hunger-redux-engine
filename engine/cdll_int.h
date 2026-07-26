@@ -293,6 +293,22 @@ typedef struct cl_enginefuncs_s
 	int		(*pfnDrawString)( int x, int y, const char *str, int r, int g, int b );
 	int		(*pfnDrawStringReverse)( int x, int y, const char *str, int r, int g, int b );
 	const char	*(*LocalPlayerInfo_ValueForKey)( const char* key );
+/*
+ * API 10 styled HUD text request packed into the existing font argument.
+ * A zero request remains the legacy medium/default style.
+ */
+#define HUD_TEXT_STYLE_MASK       0x00000003u
+#define HUD_TEXT_STYLE_DEFAULT    0x00000000u
+#define HUD_TEXT_STYLE_SMALL      0x00000001u
+#define HUD_TEXT_STYLE_MEDIUM     0x00000002u
+#define HUD_TEXT_STYLE_LARGE      0x00000003u
+#define HUD_TEXT_ALPHA_VALID      0x00000100u
+#define HUD_TEXT_ALPHA_SHIFT      16
+#define HUD_TEXT_ALPHA_MASK       0x00FF0000u
+#define HUD_TEXT_QUERY            0x80000000u
+#define HUD_TEXT_REQUEST( style, alpha ) \
+	((unsigned int)( style ) | HUD_TEXT_ALPHA_VALID | (((unsigned int)( alpha ) & 0xFFu ) << HUD_TEXT_ALPHA_SHIFT))
+
 	int		(*pfnVGUI2DrawCharacter)( int x, int y, int ch, unsigned int font );
 	int		(*pfnVGUI2DrawCharacterAdditive)( int x, int y, int ch, int r, int g, int b, unsigned int font );
 	unsigned int	(*pfnGetApproxWavePlayLen)( const char *filename );

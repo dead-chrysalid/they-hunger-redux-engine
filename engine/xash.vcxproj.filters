@@ -23,6 +23,12 @@
     <ClInclude Include="client\input.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="client\hud_text.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="client\stb_truetype.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="client\ref_common.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -695,6 +701,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="client\input.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="client\hud_text.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="client\keys.c">
