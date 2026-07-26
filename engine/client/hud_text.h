@@ -8,6 +8,9 @@ typedef unsigned int hud_text_style_t;
 
 void CL_HudTextVidInit( void );
 void CL_HudTextShutdown( void );
+void CL_HudTextInfo_f( void );
+void CL_HudTextTest_f( void );
+void CL_HudTextDrawTest( void );
 qboolean CL_HudTextReady( void );
 int CL_HudTextDrawCharacter( hud_text_style_t style, int x, int y, int ch, int r, int g, int b, int a );
 int CL_HudTextGetHeight( hud_text_style_t style );
