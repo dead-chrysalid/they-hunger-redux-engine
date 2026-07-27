@@ -297,11 +297,12 @@ typedef struct cl_enginefuncs_s
  * API 10 styled HUD text request packed into the existing font argument.
  * A zero request remains the legacy medium/default style.
  */
-#define HUD_TEXT_STYLE_MASK       0x00000003u
+#define HUD_TEXT_STYLE_MASK       0x00000007u
 #define HUD_TEXT_STYLE_DEFAULT    0x00000000u
 #define HUD_TEXT_STYLE_SMALL      0x00000001u
 #define HUD_TEXT_STYLE_MEDIUM     0x00000002u
 #define HUD_TEXT_STYLE_LARGE      0x00000003u
+#define HUD_TEXT_STYLE_XLARGE     0x00000004u
 #define HUD_TEXT_ALPHA_VALID      0x00000100u
 #define HUD_TEXT_ALPHA_SHIFT      16
 #define HUD_TEXT_ALPHA_MASK       0x00FF0000u
