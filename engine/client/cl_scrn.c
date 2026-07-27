@@ -19,6 +19,7 @@ GNU General Public License for more details.
 #include "qfont.h"
 #include "input.h"
 #include "library.h"
+#include "hud_text.h"
 
 convar_t *scr_centertime;
 convar_t *scr_loading;
@@ -841,6 +842,8 @@ void SCR_Init( void )
 	Cmd_AddCommand( "viewpos", SCR_Viewpos_f, "prints current player origin" );
 	Cmd_AddCommand( "sizeup", SCR_SizeUp_f, "screen size up to 10 points" );
 	Cmd_AddCommand( "sizedown", SCR_SizeDown_f, "screen size down to 10 points" );
+	Cmd_AddCommand( "hud_text_info", CL_HudTextInfo_f, "show the active HUD TrueType rasterizer and atlas state" );
+	Cmd_AddCommand( "hud_text_test", CL_HudTextTest_f, "toggle a HUD TrueType style and tint test overlay" );
 
 	if( !UI_LoadProgs( ))
 	{
@@ -869,6 +872,8 @@ void SCR_Shutdown( void )
 	Cmd_RemoveCommand( "timerefresh" );
 	Cmd_RemoveCommand( "skyname" );
 	Cmd_RemoveCommand( "viewpos" );
+	Cmd_RemoveCommand( "hud_text_info" );
+	Cmd_RemoveCommand( "hud_text_test" );
 	UI_SetActiveMenu( false );
 	CL_HudTextShutdown();
 	UI_UnloadProgs();

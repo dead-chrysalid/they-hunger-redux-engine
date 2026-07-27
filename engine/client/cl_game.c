@@ -315,9 +315,9 @@ static int CL_AdjustYPos( float y, int height )
 	return yPos;
 }
 
-static qboolean CL_HudTrueTypeReady( void )
+static qboolean CL_HudTrueTypeReady( hud_text_style_t style )
 {
-	return hud_truetype && hud_truetype->value && CL_HudTextReady();
+	return hud_truetype && hud_truetype->value && CL_HudTextStyleReady( style );
 }
 
 static int CL_HudTrueTypeReadChar( const char **text )
@@ -358,7 +358,7 @@ void CL_CenterPrint( const char *text, float y )
 	Q_strncpy( clgame.centerPrint.message, text, sizeof( clgame.centerPrint.message ));
 	s = clgame.centerPrint.message;
 
-	if( CL_HudTrueTypeReady() )
+	if( CL_HudTrueTypeReady( HUD_TEXT_STYLE_LARGE ))
 	{
 		const char *p = clgame.centerPrint.message;
 		int ch;
@@ -759,7 +759,7 @@ void CL_DrawCenterPrint( void )
 	colorDefault = g_color_table[7];
 	pText = clgame.centerPrint.message;
 
-	if( CL_HudTrueTypeReady() )
+	if( CL_HudTrueTypeReady( HUD_TEXT_STYLE_LARGE ))
 	{
 		const char *read;
 		int line[MAX_LINELENGTH];
@@ -2003,7 +2003,7 @@ int GAME_EXPORT CL_GetScreenInfo( SCREENINFO *pscrinfo )
 		clgame.scrInfo.iFlags &= ~SCRINFO_STRETCHED;
 	}
 
-	if( CL_HudTrueTypeReady() )
+	if( CL_HudTrueTypeReady( HUD_TEXT_STYLE_MEDIUM ))
 	{
 		int i;
 		float toScrInfo = clgame.scrInfo.iWidth / (float)refState.width;
@@ -2244,7 +2244,7 @@ static int GAME_EXPORT pfnDrawCharacter( int x, int y, int number, int r, int g,
 	if( hud_utf8->value )
 		drawNumber = Con_UtfProcessChar( drawNumber );
 
-	if( CL_HudTrueTypeReady() )
+	if( CL_HudTrueTypeReady( HUD_TEXT_STYLE_MEDIUM ))
 	{
 		float fx = x;
 		float fy = y;
@@ -3306,7 +3306,7 @@ static int GAME_EXPORT pfnVGUI2DrawCharacter( int x, int y, int number, unsigned
 	{
 		float toScrInfo;
 
-		if( !CL_HudTrueTypeReady() )
+		if( !CL_HudTrueTypeReady( style ))
 			return 0;
 		toScrInfo = clgame.scrInfo.iWidth / (float)refState.width;
 		if( number == 0 )
@@ -3320,7 +3320,7 @@ static int GAME_EXPORT pfnVGUI2DrawCharacter( int x, int y, int number, unsigned
 		return (int)( CL_HudTextGetCharWidth( style, number ) * toScrInfo + 0.5f );
 	}
 
-	if( CL_HudTrueTypeReady() )
+	if( CL_HudTrueTypeReady( style ))
 	{
 		float fx = x;
 		float fy = y;
@@ -3379,7 +3379,7 @@ static int GAME_EXPORT pfnVGUI2DrawCharacterAdditive( int x, int y, int ch, int 
 	if( font & HUD_TEXT_QUERY )
 		return pfnVGUI2DrawCharacter( x, y, ch, font );
 
-	if( CL_HudTrueTypeReady() )
+	if( CL_HudTrueTypeReady( style ))
 	{
 		float fx = x;
 		float fy = y;
