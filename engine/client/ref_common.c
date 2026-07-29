@@ -79,6 +79,20 @@ qboolean R_RTEditorSetEnabled( qboolean enabled )
 	return ref.dllFuncs.RT_EditorSetEnabled( enabled );
 }
 
+qboolean R_RTEditorToggleMode( int mode )
+{
+	ref_editor_status_t status;
+	const int requestedMode = mode >= 2 ? 2 : 1;
+	const int currentMode = Cvar_VariableValue( "rt_editor_mode" ) >= 1.5f ? 2 : 1;
+
+	R_RTEditorGetStatus( &status );
+	if( status.active && currentMode == requestedMode )
+		return R_RTEditorSetEnabled( false );
+
+	Cvar_SetValue( "rt_editor_mode", (float)requestedMode );
+	return R_RTEditorSetEnabled( true );
+}
+
 qboolean R_RTEditorHandleInput( const ref_editor_event_t *event )
 {
 	if( !event || !ref.initialized || !ref.dllFuncs.RT_EditorHandleInput )
