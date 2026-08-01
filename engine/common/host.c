@@ -807,9 +807,63 @@ void Host_Userconfigd_f( void )
 }
 
 #if !XASH_DEDICATED
-static void Host_HudCvarEditorCommit_f( void )
+static char host_cvar_editor_names[CVAR_EDITOR_MAX_CVARS][MAX_QPATH];
+static int host_cvar_editor_count;
+
+static qboolean Host_IsSafeCvarEditorName( const char *name )
 {
+	const char *p;
+	if( !name || !name[0] || Q_strlen( name ) >= MAX_QPATH ) return false;
+	for( p = name; *p; p++ )
+	{
+		if(( *p >= 'a' && *p <= 'z' ) || ( *p >= 'A' && *p <= 'Z' ) ||
+			( *p >= '0' && *p <= '9' ) || *p == '_' || *p == '.' || *p == '-' )
+			continue;
+		return false;
+	}
+	return true;
+}
+
+static void Host_CvarEditorBegin_f( void )
+{
+	host_cvar_editor_count = 0;
+}
+
+static void Host_CvarEditorTrack_f( void )
+{
+	const char *name;
+	int i;
+
+	if( Cmd_Argc() != 2 ) return;
+	name = Cmd_Argv( 1 );
+	if( !Host_IsSafeCvarEditorName( name ) || !Cvar_FindVar( name )) return;
+
+	for( i = 0; i < host_cvar_editor_count; i++ )
+	{
+		if( !Q_stricmp( name, host_cvar_editor_names[i] )) return;
+	}
+
+	if( host_cvar_editor_count >= CVAR_EDITOR_MAX_CVARS )
+	{
+		Con_Printf( S_ERROR "Cvar Editor export exceeds %d values.\n",
+			CVAR_EDITOR_MAX_CVARS );
+		return;
+	}
+
+	Q_strncpy( host_cvar_editor_names[host_cvar_editor_count++],
+		name, MAX_QPATH );
+}
+
+static void Host_CvarEditorCommit_f( void )
+{
+	const char *names[CVAR_EDITOR_MAX_CVARS];
+	int i;
+
 	Host_WriteConfig();
+	for( i = 0; i < host_cvar_editor_count; i++ )
+		names[i] = host_cvar_editor_names[i];
+	Host_WriteCvarEditorConfig( names, host_cvar_editor_count );
+	host_cvar_editor_count = 0;
 }
 #endif
 
@@ -1067,8 +1121,12 @@ void Host_InitCommon( int argc, char **argv, const char *progname, qboolean bCha
 	Cmd_AddCommand( "memlist", Host_MemStats_f, "prints memory pool information" );
 	Cmd_AddRestrictedCommand( "userconfigd", Host_Userconfigd_f, "execute all scripts from userconfig.d" );
 #if !XASH_DEDICATED
-	Cmd_AddRestrictedCommand( "_hud_cvar_editor_commit", Host_HudCvarEditorCommit_f,
-		"persist archived cvars after a Cvar Editor action" );
+	Cmd_AddRestrictedCommand( "_cvar_editor_begin", Host_CvarEditorBegin_f,
+		"begin an internal Cvar Editor release export" );
+	Cmd_AddRestrictedCommand( "_cvar_editor_track", Host_CvarEditorTrack_f,
+		"track an internal Cvar Editor release value" );
+	Cmd_AddRestrictedCommand( "_cvar_editor_commit", Host_CvarEditorCommit_f,
+		"persist Cvar Editor values to profile and release content" );
 #endif
 
 	Image_Init();
@@ -1208,6 +1266,9 @@ int EXPORT Host_Main( int argc, char **argv, const char *progname, int bChangeGa
 		}
 		// exec all files from userconfig.d
 		Host_Userconfigd_f();
+		// Authored Cvar Editor tuning is release-owned and intentionally wins
+		// over preserved profile values.
+		Cbuf_AddText( "exec " CVAR_EDITOR_CONFIG "\n" );
 		break;
 	case HOST_DEDICATED:
 		// allways parse commandline in dedicated-mode
