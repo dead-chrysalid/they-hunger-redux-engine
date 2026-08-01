@@ -578,6 +578,9 @@ void Host_WriteServerConfig( const char *name );
 void Host_WriteOpenGLConfig( void );
 void Host_WriteVideoConfig( void );
 void Host_WriteConfig( void );
+void Host_WriteCvarEditorConfig( const char *const *names, int count );
+#define CVAR_EDITOR_CONFIG "cvar_editor.cfg"
+#define CVAR_EDITOR_MAX_CVARS 256
 qboolean Host_IsLocalGame( void );
 qboolean Host_IsLocalClient( void );
 void Host_ShutdownServer( void );

@@ -1409,6 +1409,55 @@ void Host_WriteConfig( void )
 
 /*
 ===============
+Host_WriteCvarEditorConfig
+
+Writes every value described by the Cvar Editor to release-owned content.
+Unlike config.cfg, this file is tracked by the content worktree and shipped
+in a release. It is loaded after user configuration so authored tuning wins.
+===============
+*/
+void Host_WriteCvarEditorConfig( const char *const *names, int nameCount )
+{
+	convar_t *var;
+	file_t *f;
+	int i;
+	int count = 0;
+
+	if( !clgame.hInstance || Sys_CheckParm( "-nowriteconfig" ) ||
+		!names || nameCount <= 0 ) return;
+
+	f = FS_Open( CVAR_EDITOR_CONFIG ".new", "w", false );
+	if( !f )
+	{
+		Con_Printf( S_ERROR "Couldn't write %s.\n", CVAR_EDITOR_CONFIG );
+		return;
+	}
+
+	FS_Printf( f, "// Release-owned values exported by the developer Cvar Editor.\n" );
+	FS_Printf( f, "// This file intentionally executes after user profile configuration.\n" );
+	for( i = 0; i < nameCount; i++ )
+	{
+		var = Cvar_FindVar( names[i] );
+		if( !var ) continue;
+		FS_Printf( f, "%s \"%s\"\n", var->name, var->string );
+		count++;
+	}
+
+	if( count == 0 )
+	{
+		FS_Close( f );
+		FS_Delete( CVAR_EDITOR_CONFIG ".new" );
+		Con_Printf( S_ERROR "No Cvar Editor values were available to export.\n" );
+		return;
+	}
+
+	Host_FinalizeConfig( f, CVAR_EDITOR_CONFIG );
+	Con_Reportf( "Cvar Editor exported %d release values to %s\n",
+		count, CVAR_EDITOR_CONFIG );
+}
+
+/*
+===============
 Host_WriteServerConfig
 
 save serverinfo variables into server.cfg (using for dedicated server too)

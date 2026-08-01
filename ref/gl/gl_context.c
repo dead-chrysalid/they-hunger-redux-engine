@@ -525,8 +525,16 @@ static RgBool32 RGCONV RT_EditorCvarSet( void *userdata, const char *name, float
 
 static void RGCONV RT_EditorCvarCommit( void *userdata )
 {
+	uint32_t i;
 	(void)userdata;
-	gEngfuncs.Cbuf_AddText( "_hud_cvar_editor_commit\n" );
+	gEngfuncs.Cbuf_AddText( "_cvar_editor_begin\n" );
+	for( i = 0; i < rt_editor_cvar_count; i++ )
+	{
+		const char *name = rt_editor_cvars[i].pName;
+		if( !name || !gEngfuncs.pfnGetCvarPointer( name, 0 )) continue;
+		gEngfuncs.Cbuf_AddText( va( "_cvar_editor_track \"%s\"\n", name ));
+	}
+	gEngfuncs.Cbuf_AddText( "_cvar_editor_commit\n" );
 }
 
 static void RT_EditorBuildCvarList( void )
@@ -700,6 +708,11 @@ static void RT_CvarEditorToggle_f( void )
 	RT_EditorToggleMode( RG_EDITOR_MODE_CVARS );
 }
 
+static void RT_CvarEditorExport_f( void )
+{
+	RT_EditorCvarCommit( NULL );
+}
+
 static void RT_EditorRetrySave_f( void )
 {
 	if( rg_instance ) rgEditorRetrySave( rg_instance );
@@ -719,6 +732,7 @@ void RT_EditorInit( void )
 	gEngfuncs.Cvar_Get( "rt_editor_speed", "500", FCVAR_ARCHIVE, "RT editor noclip speed in game units per second" );
 	gEngfuncs.Cmd_AddCommand( "rt_editor_toggle", RT_EditorToggle_f, "Toggle the developer RT live editor" );
 	gEngfuncs.Cmd_AddCommand( "rt_cvar_editor_toggle", RT_CvarEditorToggle_f, "Toggle the developer Cvar Editor" );
+	gEngfuncs.Cmd_AddCommand( "rt_cvar_editor_export", RT_CvarEditorExport_f, "Export every Cvar Editor value to release content" );
 	gEngfuncs.Cmd_AddCommand( "rt_editor_retry_save", RT_EditorRetrySave_f, "Retry pending RT editor saves" );
 
 	RT_EditorBuildCvarList();
@@ -740,6 +754,7 @@ void RT_EditorShutdown( void )
 	}
 	gEngfuncs.Cmd_RemoveCommand( "rt_editor_toggle" );
 	gEngfuncs.Cmd_RemoveCommand( "rt_cvar_editor_toggle" );
+	gEngfuncs.Cmd_RemoveCommand( "rt_cvar_editor_export" );
 	gEngfuncs.Cmd_RemoveCommand( "rt_editor_retry_save" );
 	rt_editor_active = rt_editor_workspace = rt_editor_unsaved =
 		rt_editor_map_serial = rt_editor_mode = NULL;
