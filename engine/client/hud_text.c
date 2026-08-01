@@ -15,7 +15,7 @@ hud_text.c - engine-owned TrueType rendering for classic HUD text
 #include "stb_truetype.h"
 
 #define HUD_TEXT_REFERENCE_HEIGHT 768.0f
-#define HUD_TEXT_STYLE_COUNT 4
+#define HUD_TEXT_STYLE_COUNT 8
 #define HUD_TEXT_GLYPH_CACHE_SIZE 2048
 #define HUD_TEXT_ATLAS_SIZE 512
 #define HUD_TEXT_ATLAS_GLYPH_PAD 2
@@ -23,7 +23,7 @@ hud_text.c - engine-owned TrueType rendering for classic HUD text
 #define HUD_TEXT_MIN_SIZE 4
 #define HUD_TEXT_MAX_SIZE 96
 
-#define HUD_TEXT_DEFAULT_FONT "resource/fonts/Roboto-SemiBold.ttf"
+#define HUD_TEXT_DEFAULT_FONT "resource/fonts/VCR_OSD_MONO_1.001.ttf"
 
 typedef enum hud_text_backend_e
 {
@@ -95,7 +95,7 @@ static qboolean CL_HudTextPrewarmStyle( hud_text_style_t style );
 
 static hud_text_style_t CL_HudTextNormalizeStyle( hud_text_style_t style )
 {
-	if( style == HUD_TEXT_STYLE_SMALL || style == HUD_TEXT_STYLE_LARGE )
+	if( style >= HUD_TEXT_STYLE_SMALL && style <= HUD_TEXT_STYLE_DISPLAY )
 		return style;
 	return HUD_TEXT_STYLE_MEDIUM;
 }
@@ -320,6 +320,10 @@ static void CL_HudTextSetDefaults( void )
 	hudTextFonts[HUD_TEXT_STYLE_SMALL].designSize = 18;
 	hudTextFonts[HUD_TEXT_STYLE_MEDIUM].designSize = 28;
 	hudTextFonts[HUD_TEXT_STYLE_LARGE].designSize = 36;
+	hudTextFonts[HUD_TEXT_STYLE_XLARGE].designSize = 64;
+	hudTextFonts[HUD_TEXT_STYLE_TINY].designSize = 14;
+	hudTextFonts[HUD_TEXT_STYLE_COMPACT].designSize = 22;
+	hudTextFonts[HUD_TEXT_STYLE_DISPLAY].designSize = 48;
 }
 
 static void CL_HudTextSetFont( hud_text_style_t style, const char *path )
@@ -370,6 +374,22 @@ static qboolean CL_HudTextLoadScheme( void )
 			CL_HudTextSetFont( HUD_TEXT_STYLE_LARGE, value );
 		else if( !Q_stricmp( token, "LARGE_SIZE" ))
 			CL_HudTextSetSize( HUD_TEXT_STYLE_LARGE, value );
+		else if( !Q_stricmp( token, "XLARGE_FONT" ))
+			CL_HudTextSetFont( HUD_TEXT_STYLE_XLARGE, value );
+		else if( !Q_stricmp( token, "XLARGE_SIZE" ))
+			CL_HudTextSetSize( HUD_TEXT_STYLE_XLARGE, value );
+		else if( !Q_stricmp( token, "TINY_FONT" ))
+			CL_HudTextSetFont( HUD_TEXT_STYLE_TINY, value );
+		else if( !Q_stricmp( token, "TINY_SIZE" ))
+			CL_HudTextSetSize( HUD_TEXT_STYLE_TINY, value );
+		else if( !Q_stricmp( token, "COMPACT_FONT" ))
+			CL_HudTextSetFont( HUD_TEXT_STYLE_COMPACT, value );
+		else if( !Q_stricmp( token, "COMPACT_SIZE" ))
+			CL_HudTextSetSize( HUD_TEXT_STYLE_COMPACT, value );
+		else if( !Q_stricmp( token, "DISPLAY_FONT" ))
+			CL_HudTextSetFont( HUD_TEXT_STYLE_DISPLAY, value );
+		else if( !Q_stricmp( token, "DISPLAY_SIZE" ))
+			CL_HudTextSetSize( HUD_TEXT_STYLE_DISPLAY, value );
 	}
 
 	Mem_Free( file );
@@ -511,7 +531,7 @@ void CL_HudTextVidInit( void )
 		Con_DPrintf( "HUD text: fonts.lst not found, using legacy universal font fallback\n" );
 	}
 
-	for( i = HUD_TEXT_STYLE_SMALL; i <= HUD_TEXT_STYLE_LARGE; i++ )
+	for( i = HUD_TEXT_STYLE_SMALL; i <= HUD_TEXT_STYLE_DISPLAY; i++ )
 	{
 		if( !CL_HudTextLoadFont( &hudTextFonts[i] ))
 			continue;
@@ -521,7 +541,7 @@ void CL_HudTextVidInit( void )
 	}
 
 	hudTextReady = false;
-	for( i = HUD_TEXT_STYLE_SMALL; i <= HUD_TEXT_STYLE_LARGE; i++ )
+	for( i = HUD_TEXT_STYLE_SMALL; i <= HUD_TEXT_STYLE_DISPLAY; i++ )
 	{
 		if( !hudTextFonts[i].ready )
 			continue;
@@ -918,7 +938,8 @@ void CL_HudTextInfo_f( void )
 {
 	static const char *styleNames[HUD_TEXT_STYLE_COUNT] =
 	{
-		"default", "small", "medium", "large"
+		"default", "small", "medium", "large", "xlarge",
+		"tiny", "compact", "display"
 	};
 	hud_text_font_t *font;
 	int glyphCount = 0;
@@ -936,20 +957,20 @@ void CL_HudTextInfo_f( void )
 		if( hudTextAtlasPages[i].occupied )
 			pageCount++;
 	}
-	for( i = HUD_TEXT_STYLE_SMALL; i <= HUD_TEXT_STYLE_LARGE; i++ )
+	for( i = HUD_TEXT_STYLE_SMALL; i <= HUD_TEXT_STYLE_DISPLAY; i++ )
 	{
 		if( hudTextFonts[i].ready )
 			readyCount++;
 	}
 
-	Con_Printf( "HUD TrueType: %s, ready: %i/3 styles, atlas: %ix%i, padding: %ipx\n",
+	Con_Printf( "HUD TrueType: %s, ready: %i/7 styles, atlas: %ix%i, padding: %ipx\n",
 		hud_truetype && hud_truetype->value ? "enabled" : "disabled",
 		readyCount, HUD_TEXT_ATLAS_SIZE, HUD_TEXT_ATLAS_SIZE,
 		HUD_TEXT_ATLAS_GLYPH_PAD );
 	Con_Printf( "HUD text cache: %i glyphs, %i pages, %u per-glyph stb fallbacks, test overlay: %s\n",
 		glyphCount, pageCount, hudTextStbFallbackGlyphs, hudTextTestVisible ? "on" : "off" );
 
-	for( i = HUD_TEXT_STYLE_SMALL; i <= HUD_TEXT_STYLE_LARGE; i++ )
+	for( i = HUD_TEXT_STYLE_SMALL; i <= HUD_TEXT_STYLE_DISPLAY; i++ )
 	{
 		font = &hudTextFonts[i];
 #if XASH_WIN32
@@ -993,30 +1014,51 @@ void CL_HudTextDrawTest( void )
 	int x = 64;
 	int y = 72;
 	int smallHeight;
+	int tinyHeight;
+	int compactHeight;
 	int mediumHeight;
 	int largeHeight;
+	int displayHeight;
+	int xlargeHeight;
 	int panelWidth;
 	int panelHeight;
 
 	if( !hudTextTestVisible || !hudTextReady || !hud_truetype || !hud_truetype->value )
 		return;
 
+	tinyHeight = CL_HudTextGetHeight( HUD_TEXT_STYLE_TINY );
 	smallHeight = CL_HudTextGetHeight( HUD_TEXT_STYLE_SMALL );
+	compactHeight = CL_HudTextGetHeight( HUD_TEXT_STYLE_COMPACT );
 	mediumHeight = CL_HudTextGetHeight( HUD_TEXT_STYLE_MEDIUM );
 	largeHeight = CL_HudTextGetHeight( HUD_TEXT_STYLE_LARGE );
+	displayHeight = CL_HudTextGetHeight( HUD_TEXT_STYLE_DISPLAY );
+	xlargeHeight = CL_HudTextGetHeight( HUD_TEXT_STYLE_XLARGE );
 	panelWidth = Q_min( 1100, refState.width - 64 );
-	panelHeight = smallHeight + mediumHeight + largeHeight + 72;
+	panelHeight = tinyHeight + smallHeight + compactHeight + mediumHeight +
+		largeHeight + displayHeight + xlargeHeight + 120;
 
 	ref.dllFuncs.FillRGBABlend((float)( x - 24 ), (float)( y - 24 ),
 		(float)panelWidth, (float)panelHeight, 0, 0, 0, 210 );
+	CL_HudTextDrawTestLine( HUD_TEXT_STYLE_TINY, x, y,
+		"Tiny 14 - compact card labels", 255, 255, 255 );
+	y += tinyHeight + 8;
 	CL_HudTextDrawTestLine( HUD_TEXT_STYLE_SMALL, x, y,
 		"Small 18 - independently tinted", 255, 196, 96 );
-	y += smallHeight + 12;
+	y += smallHeight + 8;
+	CL_HudTextDrawTestLine( HUD_TEXT_STYLE_COMPACT, x, y,
+		"Compact 22 - status values", 255, 255, 255 );
+	y += compactHeight + 8;
 	CL_HudTextDrawTestLine( HUD_TEXT_STYLE_MEDIUM, x, y,
 		"Medium 28 - Win32 hinted", 130, 225, 160 );
-	y += mediumHeight + 12;
+	y += mediumHeight + 8;
 	CL_HudTextDrawTestLine( HUD_TEXT_STYLE_LARGE, x, y,
 		"Large 36 - padded atlas", 140, 190, 255 );
+	y += largeHeight + 8;
+	CL_HudTextDrawTestLine( HUD_TEXT_STYLE_DISPLAY, x, y,
+		"Display 48 - large labels", 255, 255, 255 );
+	y += displayHeight + 8;
+	CL_HudTextDrawTestLine( HUD_TEXT_STYLE_XLARGE, x, y,
+		"XLarge 64 - ammo slash", 204, 204, 204 );
 }
 
 int CL_HudTextGetHeight( hud_text_style_t style )

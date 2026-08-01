@@ -56,6 +56,7 @@ void R_UpdateRefState( void );
 // Developer-only RT live editor bridge. These helpers are safe when the
 // selected renderer does not implement the editor callbacks.
 qboolean R_RTEditorSetEnabled( qboolean enabled );
+qboolean R_RTEditorToggleMode( int mode );
 qboolean R_RTEditorHandleInput( const ref_editor_event_t *event );
 void R_RTEditorGetStatus( ref_editor_status_t *status );
 void R_RTEditorValidateState( void );

@@ -137,13 +137,18 @@ static qboolean SDLash_RTEditorEvent( const SDL_Event *event )
 	ref_editor_event_t input;
 	R_RTEditorGetStatus( &status );
 
-	if( event->type == SDL_KEYDOWN && event->key.keysym.scancode == SDL_SCANCODE_F10 &&
+	if( event->type == SDL_KEYDOWN &&
+		( event->key.keysym.scancode == SDL_SCANCODE_F9 ||
+		  event->key.keysym.scancode == SDL_SCANCODE_F10 ) &&
 		!event->key.repeat )
 	{
-		R_RTEditorSetEnabled( !status.active );
+		R_RTEditorToggleMode(
+			event->key.keysym.scancode == SDL_SCANCODE_F9 ? 2 : 1 );
 		return true;
 	}
-	if( event->type == SDL_KEYUP && event->key.keysym.scancode == SDL_SCANCODE_F10 )
+	if( event->type == SDL_KEYUP &&
+		( event->key.keysym.scancode == SDL_SCANCODE_F9 ||
+		  event->key.keysym.scancode == SDL_SCANCODE_F10 ))
 		return true;
 	if( !status.active )
 		return false;

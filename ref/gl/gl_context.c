@@ -76,6 +76,11 @@ pfnFillRGBABlend
 static void GAME_EXPORT CL_FillRGBABlend( float _x, float _y, float _w, float _h, int r, int g, int b, int a )
 {
 	pglDisable( GL_TEXTURE_2D );
+	// The normal 2D setup keeps alpha testing enabled for sprites. RayTracedGL1
+	// maps that state to an alpha-tested primitive, which discards the low-alpha
+	// middle of procedural gradients and makes adjacent strips look detached.
+	// Solid-color translucent quads must use blending only.
+	pglDisable( GL_ALPHA_TEST );
 	pglEnable( GL_BLEND );
 	pglTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE );
 	pglBlendFunc( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
@@ -91,6 +96,7 @@ static void GAME_EXPORT CL_FillRGBABlend( float _x, float _y, float _w, float _h
 	pglColor3f( 1.0f, 1.0f, 1.0f );
 	pglEnable( GL_TEXTURE_2D );
 	pglDisable( GL_BLEND );
+	pglEnable( GL_ALPHA_TEST );
 }
 
 void Mod_BrushUnloadTextures( model_t *mod )
@@ -361,6 +367,231 @@ static cvar_t *rt_editor_active;
 static cvar_t *rt_editor_workspace;
 static cvar_t *rt_editor_unsaved;
 static cvar_t *rt_editor_map_serial;
+static cvar_t *rt_editor_mode;
+
+#define CVAR_BOOL( name, label, category, def ) \
+	{ name, label, category, RG_EDITOR_CVAR_BOOL, def, 0.0f, 1.0f, 1.0f, NULL }
+#define CVAR_INT( name, label, category, def, minv, maxv ) \
+	{ name, label, category, RG_EDITOR_CVAR_INT, def, minv, maxv, 1.0f, "%d" }
+#define CVAR_FLOAT( name, label, category, def, minv, maxv, drag, format ) \
+	{ name, label, category, RG_EDITOR_CVAR_FLOAT, def, minv, maxv, drag, format }
+
+static const RgEditorCvarDescriptor rt_editor_base_cvars[] =
+{
+	CVAR_INT( "hud_v6_toast_x", "Screen X", "HUD v6 / Toast Console", 8, 0, 1024 ),
+	CVAR_INT( "hud_v6_toast_bottom", "Bottom offset", "HUD v6 / Toast Console", 216, 0, 1024 ),
+	CVAR_INT( "hud_v6_toast_font_size", "Text font size", "HUD v6 / Toast Console", 28, 14, 64 ),
+	CVAR_FLOAT( "hud_v6_toast_max_width_fraction", "Maximum screen width", "HUD v6 / Toast Console", 0.45f, 0.1f, 0.9f, 0.01f, "%.2f" ),
+	CVAR_INT( "hud_v6_toast_line_gap", "Line gap", "HUD v6 / Toast Console", 0, 0, 64 ),
+	CVAR_INT( "hud_v6_toast_visible_rows", "Maximum simultaneous messages", "HUD v6 / Toast Console", 12, 1, 32 ),
+	CVAR_FLOAT( "hud_v6_toast_character_time", "Seconds per character", "HUD v6 / Toast Console", 0.02f, 0.001f, 1.0f, 0.005f, "%.3f" ),
+	CVAR_FLOAT( "hud_v6_toast_lifetime", "Visible lifetime", "HUD v6 / Toast Console", 8.0f, 0.05f, 120.0f, 0.05f, "%.2f s" ),
+
+	CVAR_INT( "hud_v7_status_x", "Screen X", "HUD v7 / Status Widget", 16, 0, 1024 ),
+	CVAR_INT( "hud_v7_status_bottom", "Bottom offset", "HUD v7 / Status Widget", 16, 0, 1024 ),
+	CVAR_INT( "hud_v7_status_height", "Widget height", "HUD v7 / Status Widget", 96, 32, 512 ),
+	CVAR_FLOAT( "hud_v7_status_scale", "Widget scale", "HUD v7 / Status Widget", 1.0f, 0.25f, 4.0f, 0.01f, "%.2f" ),
+
+	CVAR_INT( "hud_v7_status_weapon_icon_x", "Weapon icon X", "HUD v7 / Status Weapon", 14, -256, 1024 ),
+	CVAR_INT( "hud_v7_status_weapon_icon_y", "Weapon icon Y", "HUD v7 / Status Weapon", 10, -256, 512 ),
+	CVAR_FLOAT( "hud_v7_status_weapon_icon_scale", "Weapon icon scale", "HUD v7 / Status Weapon", 0.54f, 0.01f, 4.0f, 0.01f, "%.2f" ),
+	CVAR_INT( "hud_v7_status_ammo_count_x", "Ammo count X", "HUD v7 / Status Ammo", 120, -256, 1024 ),
+	CVAR_INT( "hud_v7_status_ammo_count_y", "Ammo count Y", "HUD v7 / Status Ammo", 20, -256, 512 ),
+	CVAR_INT( "hud_v7_status_ammo_count_font_size", "Ammo count font size", "HUD v7 / Status Ammo", 28, 14, 64 ),
+	CVAR_INT( "hud_v7_status_ammo_slash_x", "Slash X", "HUD v7 / Status Ammo", 105, -256, 1024 ),
+	CVAR_INT( "hud_v7_status_ammo_slash_y", "Slash Y", "HUD v7 / Status Ammo", 46, -256, 512 ),
+	CVAR_INT( "hud_v7_status_ammo_slash_font_size", "Slash font size", "HUD v7 / Status Ammo", 22, 14, 64 ),
+	CVAR_INT( "hud_v7_status_ammo_name_x", "Ammo name X", "HUD v7 / Status Ammo", 122, -256, 1024 ),
+	CVAR_INT( "hud_v7_status_ammo_name_y", "Ammo name Y", "HUD v7 / Status Ammo", 48, -256, 512 ),
+	CVAR_INT( "hud_v7_status_ammo_name_font_size", "Ammo name font size", "HUD v7 / Status Ammo", 18, 14, 64 ),
+
+	CVAR_INT( "hud_v7_status_health_x", "Health value X", "HUD v7 / Status Health", 12, -256, 1024 ),
+	CVAR_INT( "hud_v7_status_health_y", "Health value Y", "HUD v7 / Status Health", 72, -256, 512 ),
+	CVAR_INT( "hud_v7_status_health_font_size", "Health value font size", "HUD v7 / Status Health", 22, 14, 64 ),
+	CVAR_INT( "hud_v7_status_bar_x", "Healthbar X", "HUD v7 / Status Health", 55, -256, 1024 ),
+	CVAR_INT( "hud_v7_status_bar_y", "Healthbar Y", "HUD v7 / Status Health", 78, -256, 512 ),
+	CVAR_FLOAT( "hud_v7_status_bar_scale", "Healthbar scale", "HUD v7 / Status Health", 0.18f, 0.01f, 4.0f, 0.01f, "%.2f" ),
+	CVAR_FLOAT( "hud_v7_status_hazard_cycle_time", "Hazard cycle time", "HUD v7 / Status Health", 0.5f, 0.05f, 10.0f, 0.05f, "%.2f s" ),
+	CVAR_FLOAT( "hud_v7_status_hazard_blink_time", "Hazard blink time", "HUD v7 / Status Health", 0.25f, 0.02f, 10.0f, 0.01f, "%.2f s" ),
+	CVAR_FLOAT( "hud_v7_status_hazard_lifetime", "Hazard lifetime", "HUD v7 / Status Health", 2.0f, 0.05f, 30.0f, 0.05f, "%.2f s" ),
+	CVAR_INT( "hud_v7_status_hazard_icon_x", "Hazard icon X", "HUD v7 / Status Health", 12, -256, 1024 ),
+	CVAR_INT( "hud_v7_status_hazard_icon_y", "Hazard icon Y", "HUD v7 / Status Health", 72, -256, 512 ),
+	CVAR_FLOAT( "hud_v7_status_hazard_icon_scale", "Hazard icon scale", "HUD v7 / Status Health", 0.055f, 0.005f, 1.0f, 0.005f, "%.3f" ),
+
+	CVAR_INT( "hud_v7_status_item_icon_x", "Health-kit icon X", "HUD v7 / Status Item", 218, -256, 1024 ),
+	CVAR_INT( "hud_v7_status_item_icon_y", "Health-kit icon Y", "HUD v7 / Status Item", 69, -256, 512 ),
+	CVAR_FLOAT( "hud_v7_status_item_icon_scale", "Health-kit icon scale", "HUD v7 / Status Item", 0.36f, 0.01f, 4.0f, 0.01f, "%.2f" ),
+	CVAR_INT( "hud_v7_status_item_count_x", "Syringe count X", "HUD v7 / Status Item", 244, -256, 1024 ),
+	CVAR_INT( "hud_v7_status_item_count_y", "Syringe count Y", "HUD v7 / Status Item", 72, -256, 512 ),
+	CVAR_INT( "hud_v7_status_item_count_font_size", "Syringe count font size", "HUD v7 / Status Item", 22, 14, 64 ),
+
+	CVAR_INT( "hud_v7_weapon_x", "Screen X", "HUD v7 / Weapon Menu", 28, 0, 1024 ),
+	CVAR_INT( "hud_v7_weapon_y", "Screen Y", "HUD v7 / Weapon Menu", 103, 0, 1024 ),
+	CVAR_FLOAT( "hud_v7_weapon_scale", "Widget scale", "HUD v7 / Weapon Menu", 1.0f, 0.25f, 4.0f, 0.01f, "%.2f" ),
+	CVAR_INT( "hud_v7_weapon_bucket_x", "Bucket number X", "HUD v7 / Weapon Menu", 3, -256, 512 ),
+	CVAR_INT( "hud_v7_weapon_bucket_y", "Bucket number Y", "HUD v7 / Weapon Menu", 0, -256, 512 ),
+	CVAR_INT( "hud_v7_weapon_bucket_font_size", "Bucket number font size", "HUD v7 / Weapon Menu", 18, 14, 64 ),
+	CVAR_INT( "hud_v7_weapon_cards_x", "Cards X", "HUD v7 / Weapon Cards", 0, -256, 512 ),
+	CVAR_INT( "hud_v7_weapon_cards_y", "Cards Y", "HUD v7 / Weapon Cards", 16, -256, 512 ),
+	CVAR_FLOAT( "hud_v7_weapon_card_scale", "Card and glow scale", "HUD v7 / Weapon Cards", 0.34f, 0.01f, 4.0f, 0.01f, "%.2f" ),
+	CVAR_INT( "hud_v7_weapon_card_gap", "Card gap", "HUD v7 / Weapon Cards", 8, 0, 256 ),
+	CVAR_INT( "hud_v7_weapon_icon_x", "Icon X", "HUD v7 / Weapon Card Content", 8, -256, 512 ),
+	CVAR_INT( "hud_v7_weapon_icon_y", "Icon Y", "HUD v7 / Weapon Card Content", 4, -256, 512 ),
+	CVAR_FLOAT( "hud_v7_weapon_icon_scale", "Icon scale", "HUD v7 / Weapon Card Content", 0.27f, 0.01f, 4.0f, 0.01f, "%.2f" ),
+	CVAR_INT( "hud_v7_weapon_name_x", "Name X", "HUD v7 / Weapon Card Content", 7, -256, 512 ),
+	CVAR_INT( "hud_v7_weapon_name_y", "Name Y", "HUD v7 / Weapon Card Content", 31, -256, 512 ),
+	CVAR_INT( "hud_v7_weapon_name_font_size", "Name font size", "HUD v7 / Weapon Card Content", 14, 14, 64 ),
+	CVAR_INT( "hud_v7_weapon_ammo_right", "Ammo right inset", "HUD v7 / Weapon Card Content", 7, -256, 512 ),
+	CVAR_INT( "hud_v7_weapon_ammo_y", "Ammo Y", "HUD v7 / Weapon Card Content", 31, -256, 512 ),
+	CVAR_INT( "hud_v7_weapon_ammo_font_size", "Ammo font size", "HUD v7 / Weapon Card Content", 14, 14, 64 ),
+	CVAR_FLOAT( "hud_v7_weapon_selection_slide_speed", "Slide response", "HUD v7 / Weapon Selection", 18.0f, 1.0f, 60.0f, 0.1f, "%.1f" ),
+
+	CVAR_BOOL( "hud_draw", "Draw HUD", "HUD / General", 1.0f ),
+	CVAR_BOOL( "crosshair", "Draw crosshair", "HUD / General", 1.0f ),
+	CVAR_BOOL( "hud_fastswitch", "Fast weapon switch", "HUD / General", 0.0f ),
+	CVAR_FLOAT( "hud_deathnotice_time", "Death notice time", "HUD / General", 6.0f, 0.0f, 30.0f, 0.1f, "%.1f s" ),
+	CVAR_INT( "hud_textmode", "HUD text mode", "HUD / General", 0, 0, 2 ),
+
+	CVAR_INT( "hud_crosshair_bar_min_length", "Minimum bar length", "Crosshair", 4, 1, 128 ),
+	CVAR_INT( "hud_crosshair_bar_max_length", "Maximum bar length", "Crosshair", 14, 1, 256 ),
+	CVAR_INT( "hud_crosshair_bar_thickness", "Bar thickness", "Crosshair", 1, 1, 64 ),
+	CVAR_INT( "hud_crosshair_bar_opacity", "Bar opacity", "Crosshair", 128, 0, 255 ),
+	CVAR_INT( "hud_crosshair_dot_gap_threshold", "Dot gap threshold", "Crosshair", 2, 0, 128 ),
+	CVAR_INT( "hud_crosshair_dot_size", "Dot size", "Crosshair", 2, 1, 64 ),
+	CVAR_INT( "hud_crosshair_color_red", "Color red", "Crosshair", 255, 0, 255 ),
+	CVAR_INT( "hud_crosshair_color_green", "Color green", "Crosshair", 160, 0, 255 ),
+	CVAR_INT( "hud_crosshair_color_blue", "Color blue", "Crosshair", 0, 0, 255 ),
+	CVAR_FLOAT( "hud_scope_crosshair_scale", "Scope scale", "Crosshair", 1.0f, 0.1f, 4.0f, 0.01f, "%.2f" ),
+	CVAR_INT( "hud_scope_crosshair_size", "Explicit scope size", "Crosshair", 0, 0, 4096 ),
+
+	CVAR_BOOL( "hit_markers", "Enabled", "Hitmarkers", 1.0f ),
+	CVAR_INT( "hit_markers_simple_length", "Length", "Hitmarkers", 14, 1, 128 ),
+	CVAR_INT( "hit_markers_gap", "Gap", "Hitmarkers", 7, 0, 128 ),
+	CVAR_FLOAT( "hit_markers_opacity", "Opacity", "Hitmarkers", 1.0f, 0.0f, 1.0f, 0.01f, "%.2f" ),
+	CVAR_INT( "hit_markers_body_color_red", "Body color red", "Hitmarkers", 246, 0, 255 ),
+	CVAR_INT( "hit_markers_body_color_green", "Body color green", "Hitmarkers", 0, 0, 255 ),
+	CVAR_INT( "hit_markers_body_color_blue", "Body color blue", "Hitmarkers", 0, 0, 255 ),
+	CVAR_INT( "hit_markers_head_color_red", "Head color red", "Hitmarkers", 255, 0, 255 ),
+	CVAR_INT( "hit_markers_head_color_green", "Head color green", "Hitmarkers", 153, 0, 255 ),
+	CVAR_INT( "hit_markers_head_color_blue", "Head color blue", "Hitmarkers", 0, 0, 255 ),
+	CVAR_FLOAT( "hit_markers_start_scale", "Start scale", "Hitmarkers", 0.8f, 0.0f, 4.0f, 0.01f, "%.2f" ),
+	CVAR_FLOAT( "hit_markers_peak_scale", "Peak scale", "Hitmarkers", 1.0f, 0.0f, 4.0f, 0.01f, "%.2f" ),
+	CVAR_FLOAT( "hit_markers_end_scale", "End scale", "Hitmarkers", 0.7f, 0.0f, 4.0f, 0.01f, "%.2f" ),
+	CVAR_FLOAT( "hit_markers_fade_in_time", "Fade-in time", "Hitmarkers", 0.025f, 0.0f, 2.0f, 0.005f, "%.3f s" ),
+	CVAR_FLOAT( "hit_markers_pop_time", "Pop time", "Hitmarkers", 0.05f, 0.0f, 2.0f, 0.005f, "%.3f s" ),
+	CVAR_FLOAT( "hit_markers_fade_out_time", "Fade-out time", "Hitmarkers", 0.28f, 0.0f, 2.0f, 0.005f, "%.3f s" ),
+
+	CVAR_BOOL( "killfx_enable", "Enabled", "Kill Effects", 1.0f ),
+	CVAR_BOOL( "killfx_sound", "Sound enabled", "Kill Effects", 1.0f ),
+	CVAR_FLOAT( "killfx_sound_volume", "Sound volume", "Kill Effects", 1.0f, 0.0f, 4.0f, 0.01f, "%.2f" ),
+	CVAR_FLOAT( "killfx_sound_boost", "Sound boost", "Kill Effects", 3.2f, 0.0f, 8.0f, 0.05f, "%.2f" ),
+	CVAR_FLOAT( "killfx_sound_delay", "Sound delay", "Kill Effects", 0.05f, 0.0f, 2.0f, 0.005f, "%.3f s" ),
+	CVAR_BOOL( "killfx_vignette", "Vignette enabled", "Kill Effects", 1.0f ),
+	CVAR_INT( "killfx_vignette_alpha", "Vignette opacity", "Kill Effects", 52, 0, 255 ),
+	CVAR_FLOAT( "killfx_vignette_size", "Vignette size", "Kill Effects", 0.18f, 0.02f, 0.5f, 0.01f, "%.2f" ),
+	CVAR_FLOAT( "killfx_fade_in_time", "Fade-in time", "Kill Effects", 0.025f, 0.0f, 3.0f, 0.005f, "%.3f s" ),
+	CVAR_FLOAT( "killfx_hold_time", "Hold time", "Kill Effects", 0.04f, 0.0f, 3.0f, 0.005f, "%.3f s" ),
+	CVAR_FLOAT( "killfx_fade_out_time", "Fade-out time", "Kill Effects", 0.32f, 0.0f, 5.0f, 0.005f, "%.3f s" ),
+	CVAR_BOOL( "killfx_distortion", "Distortion enabled", "Kill Effects", 1.0f ),
+};
+
+#define RT_EDITOR_MAX_CVARS 256
+#define RT_EDITOR_SPREAD_WEAPONS 10
+#define RT_EDITOR_SPREAD_FIELDS 10
+static RgEditorCvarDescriptor rt_editor_cvars[RT_EDITOR_MAX_CVARS];
+static char rt_editor_spread_names[RT_EDITOR_SPREAD_WEAPONS][RT_EDITOR_SPREAD_FIELDS][64];
+static char rt_editor_spread_labels[RT_EDITOR_SPREAD_WEAPONS][RT_EDITOR_SPREAD_FIELDS][64];
+static char rt_editor_spread_categories[RT_EDITOR_SPREAD_WEAPONS][64];
+static uint32_t rt_editor_cvar_count;
+
+static RgBool32 RGCONV RT_EditorCvarGet( void *userdata, const char *name, float *value )
+{
+	cvar_t *cvar;
+	(void)userdata;
+	if( !name || !value ) return 0;
+	cvar = gEngfuncs.pfnGetCvarPointer( name, 0 );
+	if( !cvar ) return 0;
+	*value = cvar->value;
+	return 1;
+}
+
+static RgBool32 RGCONV RT_EditorCvarSet( void *userdata, const char *name, float value )
+{
+	(void)userdata;
+	if( !name || !gEngfuncs.pfnGetCvarPointer( name, 0 )) return 0;
+	gEngfuncs.Cvar_SetValue( name, value );
+	return 1;
+}
+
+static void RGCONV RT_EditorCvarCommit( void *userdata )
+{
+	(void)userdata;
+	gEngfuncs.Cbuf_AddText( "_hud_cvar_editor_commit\n" );
+}
+
+static void RT_EditorBuildCvarList( void )
+{
+	static const char *weaponNames[RT_EDITOR_SPREAD_WEAPONS] =
+		{ "glock", "python", "mp5", "crossbow", "shotgun",
+		  "ap9", "sniper", "tfcsniper", "taurus", "chaingun" };
+	static const char *weaponLabels[RT_EDITOR_SPREAD_WEAPONS] =
+		{ "Glock", "Python", "MP5", "Crossbow", "Shotgun",
+		  "AP9", "Sniper", "TFC Sniper", "Taurus", "Chaingun" };
+	static const char *suffixes[RT_EDITOR_SPREAD_FIELDS] =
+		{ "min", "max", "focus", "shot_add", "sprint_max_add_frac",
+		  "ads_min_add", "ads_max_add", "ads_focus_add", "ads_shot_add", "enabled" };
+	static const char *labels[RT_EDITOR_SPREAD_FIELDS] =
+		{ "Minimum spread", "Maximum spread", "Focus rate", "Shot spread add",
+		  "Sprint max add fraction", "ADS minimum add", "ADS maximum add",
+		  "ADS focus add", "ADS shot add", "Enabled" };
+	static const float defaults[RT_EDITOR_SPREAD_WEAPONS][RT_EDITOR_SPREAD_FIELDS] =
+	{
+		{ .020f, .080f, .100f, .020f, .5f, -.010f, .0f, .0f, .015f, 1.0f },
+		{ .010f, .100f, .070f, .070f, .5f, -.010f, .0f, .060f, .0f, 1.0f },
+		{ .015f, .050f, .100f, .015f, .5f, -.005f, .0f, .0f, .0f, 1.0f },
+		{ .0f, .0f, .0f, .0f, .5f, .0f, .0f, .0f, .0f, 1.0f },
+		{ .050f, .150f, .100f, .100f, .5f, .0f, -.050f, .0f, -.030f, 1.0f },
+		{ .020f, .100f, .100f, .012f, .5f, -.010f, .0f, .0f, .003f, 1.0f },
+		{ .015f, .060f, .070f, .045f, .5f, -.015f, -.060f, 1.0f, -.045f, 1.0f },
+		{ .010f, .080f, .070f, .060f, .5f, -.010f, -.080f, 1.0f, -.060f, 1.0f },
+		{ .015f, .080f, .070f, .020f, .5f, -.010f, .0f, .030f, .015f, 1.0f },
+		{ .040f, .070f, .070f, .013f, .5f, .0f, .0f, .0f, .0f, 1.0f },
+	};
+	uint32_t i;
+	rt_editor_cvar_count = ARRAYSIZE( rt_editor_base_cvars );
+	memcpy( rt_editor_cvars, rt_editor_base_cvars, sizeof( rt_editor_base_cvars ));
+
+	for( i = 0; i < RT_EDITOR_SPREAD_WEAPONS; i++ )
+	{
+		uint32_t field;
+		Q_snprintf( rt_editor_spread_categories[i], sizeof( rt_editor_spread_categories[i] ),
+			"Crosshair Spread / %s", weaponLabels[i] );
+		for( field = 0; field < RT_EDITOR_SPREAD_FIELDS &&
+			rt_editor_cvar_count < RT_EDITOR_MAX_CVARS; field++ )
+		{
+			RgEditorCvarDescriptor *descriptor = &rt_editor_cvars[rt_editor_cvar_count++];
+			Q_snprintf( rt_editor_spread_names[i][field],
+				sizeof( rt_editor_spread_names[i][field] ),
+				"cl_spread_%s_%s", weaponNames[i], suffixes[field] );
+			Q_strncpy( rt_editor_spread_labels[i][field], labels[field],
+				sizeof( rt_editor_spread_labels[i][field] ));
+			descriptor->pName = rt_editor_spread_names[i][field];
+			descriptor->pLabel = rt_editor_spread_labels[i][field];
+			descriptor->pCategory = rt_editor_spread_categories[i];
+			descriptor->type = field == RT_EDITOR_SPREAD_FIELDS - 1
+				? RG_EDITOR_CVAR_BOOL : RG_EDITOR_CVAR_FLOAT;
+			descriptor->defaultValue = defaults[i][field];
+			descriptor->minimum = field >= 5 && field <= 8 ? -2.0f : 0.0f;
+			descriptor->maximum = field == 4 ? 4.0f : ( field == 9 ? 1.0f : 2.0f );
+			descriptor->step = field == 4 ? 0.01f : 0.001f;
+			descriptor->pFormat = field == 4 ? "%.2f" : "%.3f";
+		}
+	}
+}
+
+#undef CVAR_BOOL
+#undef CVAR_INT
+#undef CVAR_FLOAT
 
 static void RT_EditorSyncCvars( const RgEditorStatus *status )
 {
@@ -392,6 +623,7 @@ static void RT_EditorGetStatusImpl( ref_editor_status_t *status )
 static qboolean RT_EditorSetEnabledImpl( qboolean enabled )
 {
 	RgEditorStatus status = { 0 };
+	RgEditorMode mode = RG_EDITOR_MODE_MAP;
 	if( !rg_instance ) return false;
 	if( enabled )
 	{
@@ -409,10 +641,16 @@ static qboolean RT_EditorSetEnabledImpl( qboolean enabled )
 			return false;
 		}
 	}
+	if( rt_editor_mode && rt_editor_mode->value >= 1.5f )
+		mode = RG_EDITOR_MODE_CVARS;
+	if( rgEditorSetMode( rg_instance, mode ) != RG_RESULT_SUCCESS ) return false;
 	if( rgEditorSetEnabled( rg_instance, enabled ) != RG_RESULT_SUCCESS ) return false;
 	rgEditorGetStatus( rg_instance, &status );
 	RT_EditorSyncCvars( &status );
-	gEngfuncs.Con_Printf( "%s\n", enabled ? "RT editor enabled" : "RT editor disabled" );
+	gEngfuncs.Con_Printf( "%s\n",
+		enabled
+			? ( mode == RG_EDITOR_MODE_CVARS ? "Cvar Editor enabled" : "RT editor enabled" )
+			: "Editor disabled" );
 	return true;
 }
 
@@ -434,11 +672,32 @@ static qboolean RT_EditorHandleInputImpl( const ref_editor_event_t *event )
 	return rgEditorSubmitInput( rg_instance, &input ) != 0;
 }
 
-static void RT_EditorToggle_f( void )
+static void RT_EditorToggleMode( RgEditorMode requestedMode )
 {
 	ref_editor_status_t status;
+	const RgEditorMode currentMode =
+		rt_editor_mode && rt_editor_mode->value >= 1.5f
+			? RG_EDITOR_MODE_CVARS : RG_EDITOR_MODE_MAP;
 	RT_EditorGetStatusImpl( &status );
-	RT_EditorSetEnabledImpl( !status.active );
+	if( status.active && currentMode == requestedMode )
+	{
+		RT_EditorSetEnabledImpl( false );
+		return;
+	}
+	gEngfuncs.Cvar_SetValue(
+		"rt_editor_mode",
+		requestedMode == RG_EDITOR_MODE_CVARS ? 2.0f : 1.0f );
+	RT_EditorSetEnabledImpl( true );
+}
+
+static void RT_EditorToggle_f( void )
+{
+	RT_EditorToggleMode( RG_EDITOR_MODE_MAP );
+}
+
+static void RT_CvarEditorToggle_f( void )
+{
+	RT_EditorToggleMode( RG_EDITOR_MODE_CVARS );
 }
 
 static void RT_EditorRetrySave_f( void )
@@ -448,6 +707,7 @@ static void RT_EditorRetrySave_f( void )
 
 void RT_EditorInit( void )
 {
+	RgEditorCvarHost cvarHost = { 0 };
 	// These are renderer-owned synchronization cvars, but they cannot use
 	// FCVAR_READ_ONLY: the public renderer API deliberately cannot mutate a
 	// read-only cvar and the client DLL must be able to observe their values.
@@ -455,17 +715,34 @@ void RT_EditorInit( void )
 	rt_editor_workspace = gEngfuncs.Cvar_Get( "rt_editor_workspace", "0", FCVAR_SPONLY|FCVAR_UNLOGGED, "RT live editor cursor workspace state" );
 	rt_editor_unsaved = gEngfuncs.Cvar_Get( "rt_editor_unsaved", "0", FCVAR_SPONLY|FCVAR_UNLOGGED, "RT live editor has unsaved changes" );
 	rt_editor_map_serial = gEngfuncs.Cvar_Get( "rt_editor_map_serial", "0", FCVAR_SPONLY|FCVAR_UNLOGGED, "RT live editor map generation" );
+	rt_editor_mode = gEngfuncs.Cvar_Get( "rt_editor_mode", "1", FCVAR_SPONLY|FCVAR_UNLOGGED, "Active developer editor mode: 1 map, 2 cvars" );
 	gEngfuncs.Cvar_Get( "rt_editor_speed", "500", FCVAR_ARCHIVE, "RT editor noclip speed in game units per second" );
 	gEngfuncs.Cmd_AddCommand( "rt_editor_toggle", RT_EditorToggle_f, "Toggle the developer RT live editor" );
+	gEngfuncs.Cmd_AddCommand( "rt_cvar_editor_toggle", RT_CvarEditorToggle_f, "Toggle the developer Cvar Editor" );
 	gEngfuncs.Cmd_AddCommand( "rt_editor_retry_save", RT_EditorRetrySave_f, "Retry pending RT editor saves" );
+
+	RT_EditorBuildCvarList();
+	cvarHost.pDescriptors = rt_editor_cvars;
+	cvarHost.descriptorCount = rt_editor_cvar_count;
+	cvarHost.pfnGetValue = RT_EditorCvarGet;
+	cvarHost.pfnSetValue = RT_EditorCvarSet;
+	cvarHost.pfnCommit = RT_EditorCvarCommit;
+	if( rg_instance )
+		rgEditorSetCvarHost( rg_instance, &cvarHost );
 }
 
 void RT_EditorShutdown( void )
 {
-	if( rg_instance ) rgEditorSetEnabled( rg_instance, false );
+	if( rg_instance )
+	{
+		rgEditorSetEnabled( rg_instance, false );
+		rgEditorSetCvarHost( rg_instance, NULL );
+	}
 	gEngfuncs.Cmd_RemoveCommand( "rt_editor_toggle" );
+	gEngfuncs.Cmd_RemoveCommand( "rt_cvar_editor_toggle" );
 	gEngfuncs.Cmd_RemoveCommand( "rt_editor_retry_save" );
-	rt_editor_active = rt_editor_workspace = rt_editor_unsaved = rt_editor_map_serial = NULL;
+	rt_editor_active = rt_editor_workspace = rt_editor_unsaved =
+		rt_editor_map_serial = rt_editor_mode = NULL;
 }
 #else
 void RT_EditorInit( void ) {}
