@@ -108,6 +108,36 @@ void CL_LoadClientSprites( void )
 
 /*
 ================
+CL_KeepClientSprites
+
+Keep engine-owned tempent sprites across client sprite registration passes.
+Their model pointers live for the whole renderer lifetime, so allowing the
+unused-sprite sweep to free them leaves cached frame texture numbers behind.
+================
+*/
+void CL_KeepClientSprites( void )
+{
+	model_t *sprites[] =
+	{
+		cl_sprite_muzzleflash[0],
+		cl_sprite_muzzleflash[1],
+		cl_sprite_muzzleflash[2],
+		cl_sprite_dot,
+		cl_sprite_glow,
+		cl_sprite_ricochet,
+		cl_sprite_shell,
+	};
+	int i;
+
+	for( i = 0; i < ARRAYSIZE( sprites ); i++ )
+	{
+		if( sprites[i] && sprites[i]->mempool && sprites[i]->cache.data )
+			sprites[i]->needload = NL_PRESENT;
+	}
+}
+
+/*
+================
 CL_AddClientResource
 
 add client-side resource to list
@@ -3125,4 +3155,3 @@ void CL_ClearEffects( void )
 	CL_ClearParticles ();
 	CL_ClearLightStyles ();
 }
-

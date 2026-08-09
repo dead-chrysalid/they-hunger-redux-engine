@@ -2054,10 +2054,7 @@ void pglBindTexture( GLenum target, GLuint texture, const char* textureName )
 {
     if( target == GL_TEXTURE_2D || target == GL_TEXTURE_RECTANGLE_EXT )
     {
-        if( textureName && textureName[ 0 ] != '\0' )
-        {
-            rt_state.curTexture2DName = textureName;
-        }
+        rt_state.curTexture2DName = textureName && textureName[ 0 ] != '\0' ? textureName : NULL;
     }
 }
 
