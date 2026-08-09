@@ -86,11 +86,14 @@ void GL_Bind( GLint tmu, GLenum texnum )
 	gl_texture_t	*texture;
 	GLuint		glTarget;
 
-	// missed or invalid texture?
-	if( texnum <= 0 || texnum >= MAX_TEXTURES )
+	// Missing, invalid, or already freed texture? A freed slot must not inherit
+	// the previously bound RT material name.
+	if( texnum <= 0 || texnum >= MAX_TEXTURES ||
+		!gl_textures[texnum].texnum || !gl_textures[texnum].name[0] ||
+		!gl_textures[texnum].target )
 	{
 		if( texnum != 0 )
-			gEngfuncs.Con_DPrintf( S_ERROR "GL_Bind: invalid texturenum %d\n", texnum );
+			gEngfuncs.Con_DPrintf( S_ERROR "GL_Bind: invalid or stale texturenum %d\n", texnum );
 		texnum = tr.defaultTexture;
 	}
 	if( tmu != GL_KEEP_UNIT )

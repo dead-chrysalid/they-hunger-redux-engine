@@ -1008,6 +1008,7 @@ cl_entity_t *R_BeamGetEntity( int index );
 void CL_KillDeadBeams( cl_entity_t *pDeadEntity );
 void CL_ParseViewBeam( sizebuf_t *msg, int beamType );
 void CL_LoadClientSprites( void );
+void CL_KeepClientSprites( void );
 void CL_ReadPointFile_f( void );
 void CL_DrawEFX( float time, qboolean fTrans );
 void CL_ThinkParticle( double frametime, particle_t *p );

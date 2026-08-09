@@ -482,6 +482,7 @@ static const RgEditorCvarDescriptor rt_editor_base_cvars[] =
 	CVAR_FLOAT( "hit_markers_fade_out_time", "Fade-out time", "Hitmarkers", 0.28f, 0.0f, 2.0f, 0.005f, "%.3f s" ),
 
 	CVAR_BOOL( "killfx_enable", "Enabled", "Kill Effects", 1.0f ),
+	CVAR_BOOL( "killfx_human_head_gibs", "Flying human skulls on headshots", "Kill Effects", 1.0f ),
 	CVAR_BOOL( "killfx_sound", "Sound enabled", "Kill Effects", 1.0f ),
 	CVAR_FLOAT( "killfx_sound_volume", "Sound volume", "Kill Effects", 1.0f, 0.0f, 4.0f, 0.01f, "%.2f" ),
 	CVAR_FLOAT( "killfx_sound_boost", "Sound boost", "Kill Effects", 3.2f, 0.0f, 8.0f, 0.05f, "%.2f" ),

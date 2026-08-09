@@ -1395,6 +1395,9 @@ void CL_ClearSpriteTextures( void )
 
 	for( i = 1; i < MAX_CLIENT_SPRITES; i++ )
 		clgame.sprites[i].needload = NL_UNREFERENCED;
+
+	// Built-in tempent sprites are engine resources, not per-map HUD resources.
+	CL_KeepClientSprites();
 }
 
 /*
