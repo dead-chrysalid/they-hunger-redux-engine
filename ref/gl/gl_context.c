@@ -525,7 +525,7 @@ static const RgEditorCvarDescriptor rt_editor_base_cvars[] =
 
 	CVAR_BOOL( "rt_interact_outline_enabled", "Enabled", "Interaction / Outlines", 1.0f ),
 	CVAR_FLOAT( "rt_interact_outline_width", "Nearby width", "Interaction / Outlines", 3.0f, 0.0f, 32.0f, 0.1f, "%.1f px" ),
-	CVAR_FLOAT( "rt_interact_outline_selected_width", "Selected width", "Interaction / Outlines", 5.0f, 0.0f, 32.0f, 0.1f, "%.1f px" ),
+	CVAR_FLOAT( "rt_interact_outline_selected_width", "Selected width", "Interaction / Outlines", 16.0f, 0.0f, 32.0f, 0.1f, "%.1f px" ),
 	CVAR_FLOAT( "rt_interact_outline_opacity", "Nearby opacity", "Interaction / Outlines", 0.78f, 0.0f, 1.0f, 0.01f, "%.2f" ),
 	CVAR_FLOAT( "rt_interact_outline_selected_opacity", "Selected opacity", "Interaction / Outlines", 0.96f, 0.0f, 1.0f, 0.01f, "%.2f" ),
 	CVAR_FLOAT( "rt_interact_outline_pulse_period", "Pulse period", "Interaction / Outlines", 1.20f, 0.05f, 10.0f, 0.05f, "%.2f s" ),

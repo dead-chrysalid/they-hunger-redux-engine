@@ -968,7 +968,7 @@ void GL_InitCommands( void )
 	CVAR_DEF_T( rt_emis_hologram,			"0.2",	"" )
 	CVAR_DEF_T( rt_interact_outline_enabled, "1", "draw interaction outlines" )
 	CVAR_DEF_T( rt_interact_outline_width, "3.0", "nearby interaction outline width in pixels" )
-	CVAR_DEF_T( rt_interact_outline_selected_width, "5.0", "selected interaction outline width in pixels" )
+	CVAR_DEF_T( rt_interact_outline_selected_width, "16.0", "selected interaction outline width in pixels" )
 	CVAR_DEF_T( rt_interact_outline_opacity, "0.78", "nearby interaction outline opacity" )
 	CVAR_DEF_T( rt_interact_outline_selected_opacity, "0.96", "selected interaction outline opacity" )
 	CVAR_DEF_T( rt_interact_outline_pulse_period, "1.20", "interaction outline pulse period" )
@@ -2387,8 +2387,8 @@ static struct
 {
     rt_batchtype_t           type;
     RgMeshInfo               mesh;
-    RgMeshPrimitiveInfo      primitive;
-    RgEditorInfo             additional;
+	RgMeshPrimitiveInfo      primitive;
+	RgEditorInfo             additional;
 	int                       interaction_glow_tag;
 	float                     outline_view_projection[16];
 } rt_batch = { 0 };
@@ -2586,12 +2586,22 @@ static void FlushBatch()
 					? RT_CVAR_TO_FLOAT( rt_interact_outline_selected_width )
 					: RT_CVAR_TO_FLOAT( rt_interact_outline_width ), 32.0f );
 
+				RgMeshPrimitiveInfo mask = rt_batch.primitive;
+				mask.flags =
+					( rt_batch.primitive.flags & RG_MESH_PRIMITIVE_ALPHA_TESTED ) |
+					RG_MESH_PRIMITIVE_INTERACTION_MASK;
+				mask.color = rgUtilPackColorByte4D( 255, 255, 255, 255 );
+				mask.emissive = 0.0f;
+				mask.pEditorInfo = NULL;
+				RgResult maskResult = rgUploadNonWorldPrimitive( rg_instance,
+					&mask, rt_batch.outline_view_projection, NULL );
+				RG_CHECK( maskResult );
+
 				RgMeshPrimitiveInfo outline = rt_batch.primitive;
 				outline.flags =
 					( rt_batch.primitive.flags & RG_MESH_PRIMITIVE_ALPHA_TESTED ) |
 					RG_MESH_PRIMITIVE_TRANSLUCENT |
-					RG_MESH_PRIMITIVE_INTERACTION_OUTLINE |
-					RG_MESH_PRIMITIVE_CULL_FRONT;
+					RG_MESH_PRIMITIVE_INTERACTION_OUTLINE;
 				outline.color = rgUtilPackColorByte4D(
 					( uint8_t )bound( 0, red, 255 ),
 					( uint8_t )bound( 0, green, 255 ),
@@ -2636,7 +2646,7 @@ static void TryBeginBatch_Finalize( rt_batchtype_t             newtype,
         {
             rt_batch.type      = newtype;
             rt_batch.mesh      = newmesh ? *newmesh : null_mesh;
-            rt_batch.primitive = newprimitive ? *newprimitive : null_prim;
+			rt_batch.primitive = newprimitive ? *newprimitive : null_prim;
 			rt_batch.interaction_glow_tag = 0;
 			memset( rt_batch.outline_view_projection, 0,
 				sizeof( rt_batch.outline_view_projection ) );
@@ -2652,8 +2662,28 @@ static void TryBeginBatch_Finalize( rt_batchtype_t             newtype,
 			if( ( rt_batch.type == RT_BATCH_TYPE_STUDIO ||
 				rt_batch.type == RT_BATCH_TYPE_BRUSH ) && interactionGlowTag )
 			{
-				matrix4x4 viewProjection;
 				rt_batch.interaction_glow_tag = interactionGlowTag;
+				matrix4x4 viewProjection;
+				if( rt_batch.type == RT_BATCH_TYPE_STUDIO ||
+					( rt_batch.type == RT_BATCH_TYPE_BRUSH && RI.currentmodel != WORLDMODEL ) )
+				{
+					Matrix4x4_Concat( viewProjection, RI.worldviewProjectionMatrix,
+						RI.objectMatrix );
+				}
+				else
+				{
+					Matrix4x4_Copy( viewProjection, RI.worldviewProjectionMatrix );
+				}
+
+				// Vulkan's positive-height viewport reverses clip-space Y relative to OpenGL.
+				// The ordinary 2D path applies the same correction while building its ortho
+				// matrix; world/entity batches need it explicitly for swapchain overlays.
+				for( int column = 0; column < 4; ++column )
+				{
+					viewProjection[1][column] = -viewProjection[1][column];
+				}
+				Matrix4x4_ToArrayFloatGL( viewProjection,
+					rt_batch.outline_view_projection );
 				if( RT_CVAR_TO_BOOL( rt_interact_outline_debug ) )
 				{
 					static double s_nextInteractionOutlineDebug = 0.0;
@@ -2669,17 +2699,6 @@ static void TryBeginBatch_Finalize( rt_batchtype_t             newtype,
 						s_nextInteractionOutlineDebug = gpGlobals->time + 1.0;
 					}
 				}
-				if( rt_batch.type == RT_BATCH_TYPE_BRUSH )
-				{
-					Matrix4x4_Concat( viewProjection, RI.worldviewProjectionMatrix,
-						RI.objectMatrix );
-				}
-				else
-				{
-					Matrix4x4_Copy( viewProjection, RI.worldviewProjectionMatrix );
-				}
-				Matrix4x4_ToArrayFloatGL( viewProjection,
-					rt_batch.outline_view_projection );
 			}
 
 			if( rt_batch.type == RT_BATCH_TYPE_2D )
