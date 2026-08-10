@@ -2586,17 +2586,6 @@ static void FlushBatch()
 					? RT_CVAR_TO_FLOAT( rt_interact_outline_selected_width )
 					: RT_CVAR_TO_FLOAT( rt_interact_outline_width ), 32.0f );
 
-				RgMeshPrimitiveInfo mask = rt_batch.primitive;
-				mask.flags =
-					( rt_batch.primitive.flags & RG_MESH_PRIMITIVE_ALPHA_TESTED ) |
-					RG_MESH_PRIMITIVE_INTERACTION_MASK;
-				mask.color = rgUtilPackColorByte4D( 255, 255, 255, 255 );
-				mask.emissive = 0.0f;
-				mask.pEditorInfo = NULL;
-				RgResult maskResult = rgUploadNonWorldPrimitive( rg_instance,
-					&mask, rt_batch.outline_view_projection, NULL );
-				RG_CHECK( maskResult );
-
 				RgMeshPrimitiveInfo outline = rt_batch.primitive;
 				outline.flags =
 					( rt_batch.primitive.flags & RG_MESH_PRIMITIVE_ALPHA_TESTED ) |
