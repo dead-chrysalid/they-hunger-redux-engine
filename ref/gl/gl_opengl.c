@@ -43,6 +43,23 @@ cvar_t	*tracerblue;
 cvar_t	*traceralpha;
 cvar_t	*tracerwidth;
 
+#if XASH_RAYTRACING
+static cvar_t *rt_interaction_glow_count;
+static cvar_t *rt_interaction_glow_selected;
+static cvar_t *rt_interaction_glow_candidates[32];
+static const char *rt_interaction_glow_candidate_names[32] =
+{
+	"_interaction_glow_00", "_interaction_glow_01", "_interaction_glow_02", "_interaction_glow_03",
+	"_interaction_glow_04", "_interaction_glow_05", "_interaction_glow_06", "_interaction_glow_07",
+	"_interaction_glow_08", "_interaction_glow_09", "_interaction_glow_10", "_interaction_glow_11",
+	"_interaction_glow_12", "_interaction_glow_13", "_interaction_glow_14", "_interaction_glow_15",
+	"_interaction_glow_16", "_interaction_glow_17", "_interaction_glow_18", "_interaction_glow_19",
+	"_interaction_glow_20", "_interaction_glow_21", "_interaction_glow_22", "_interaction_glow_23",
+	"_interaction_glow_24", "_interaction_glow_25", "_interaction_glow_26", "_interaction_glow_27",
+	"_interaction_glow_28", "_interaction_glow_29", "_interaction_glow_30", "_interaction_glow_31",
+};
+#endif
+
 DEFINE_ENGINE_SHARED_CVAR_LIST()
 
 poolhandle_t r_temppool;
@@ -949,6 +966,39 @@ void GL_InitCommands( void )
 	CVAR_DEF_T( rt_emis_maxscrcolor,		"16",	"burn on-screen emissive colors" )
 	CVAR_DEF_T( rt_emis_additive_dflt,		"0.01",	"" )
 	CVAR_DEF_T( rt_emis_hologram,			"0.2",	"" )
+	CVAR_DEF_T( rt_interact_outline_enabled, "1", "draw interaction outlines" )
+	CVAR_DEF_T( rt_interact_outline_width, "3.0", "nearby interaction outline width in pixels" )
+	CVAR_DEF_T( rt_interact_outline_selected_width, "5.0", "selected interaction outline width in pixels" )
+	CVAR_DEF_T( rt_interact_outline_opacity, "0.78", "nearby interaction outline opacity" )
+	CVAR_DEF_T( rt_interact_outline_selected_opacity, "0.96", "selected interaction outline opacity" )
+	CVAR_DEF_T( rt_interact_outline_pulse_period, "1.20", "interaction outline pulse period" )
+	CVAR_DEF_T( rt_interact_outline_pulse_amount, "0.12", "interaction outline pulse strength" )
+	CVAR_DEF_T( rt_interact_outline_item_r, "96", "item outline red" )
+	CVAR_DEF_T( rt_interact_outline_item_g, "190", "item outline green" )
+	CVAR_DEF_T( rt_interact_outline_item_b, "255", "item outline blue" )
+	CVAR_DEF_T( rt_interact_outline_use_r, "245", "usable outline red" )
+	CVAR_DEF_T( rt_interact_outline_use_g, "199", "usable outline green" )
+	CVAR_DEF_T( rt_interact_outline_use_b, "82", "usable outline blue" )
+	CVAR_DEF_T( rt_interact_outline_medkit_r, "100", "medical outline red" )
+	CVAR_DEF_T( rt_interact_outline_medkit_g, "235", "medical outline green" )
+	CVAR_DEF_T( rt_interact_outline_medkit_b, "145", "medical outline blue" )
+	CVAR_DEF_T( rt_interact_outline_enemy_r, "255", "enemy outline red" )
+	CVAR_DEF_T( rt_interact_outline_enemy_g, "80", "enemy outline green" )
+	CVAR_DEF_T( rt_interact_outline_enemy_b, "70", "enemy outline blue" )
+	CVAR_DEF_T( rt_interact_outline_selected_r, "255", "selected outline red" )
+	CVAR_DEF_T( rt_interact_outline_selected_g, "238", "selected outline green" )
+	CVAR_DEF_T( rt_interact_outline_selected_b, "174", "selected outline blue" )
+	CVAR_DEF_T( rt_interact_outline_debug, "0", "log interaction outline submissions" )
+	rt_interaction_glow_count = gEngfuncs.Cvar_Get(
+		"_interaction_glow_count", "0", 0, "internal interaction outline candidate count" );
+	rt_interaction_glow_selected = gEngfuncs.Cvar_Get(
+		"_interaction_glow_selected", "0", 0, "internal selected interaction entity" );
+	for( int interactionGlowIndex = 0; interactionGlowIndex < 32; ++interactionGlowIndex )
+	{
+		rt_interaction_glow_candidates[interactionGlowIndex] = gEngfuncs.Cvar_Get(
+			rt_interaction_glow_candidate_names[interactionGlowIndex], "0", 0,
+			"internal packed interaction outline candidate" );
+	}
 
 	CVAR_DEF_T( rt_tnmp_ev100_min,			"2.0",	"min brightness for auto-exposure" )
 	CVAR_DEF_T( rt_tnmp_ev100_max,			"7.7",	"max brightness for auto-exposure" )
@@ -2220,6 +2270,62 @@ static uint32_t MakeTempEntityIndex( const cl_entity_t* ent )
 	return ( 1u << 30u ) | ( HashCombine( iptr >> 32ull, iptr & UINT32_MAX ) );
 }
 
+#define INTERACTION_GLOW_MARKER       0x49000000
+#define INTERACTION_GLOW_MARKER_MASK  0xFF000000
+#define INTERACTION_GLOW_KIND_SHIFT   16
+#define INTERACTION_GLOW_KIND_MASK    0x00FF0000
+#define INTERACTION_GLOW_SELECTED     0x00008000
+
+static int RT_GetInteractionGlowTag( const cl_entity_t *entity )
+{
+	if( !entity )
+		return 0;
+	if( ( entity->curstate.iuser4 & INTERACTION_GLOW_MARKER_MASK ) ==
+		INTERACTION_GLOW_MARKER )
+		return entity->curstate.iuser4;
+	if( !rt_interaction_glow_count || !rt_interaction_glow_selected )
+		return 0;
+
+	const int count = bound( 0, (int)rt_interaction_glow_count->value, 32 );
+	if( RT_CVAR_TO_BOOL( rt_interact_outline_debug ) && count > 0 )
+	{
+		static double s_nextInteractionBridgeDebug = 0.0;
+		if( gpGlobals->time >= s_nextInteractionBridgeDebug ||
+			gpGlobals->time + 2.0 < s_nextInteractionBridgeDebug )
+		{
+			gEngfuncs.Con_Printf(
+				"Interaction bridge debug: count=%d selected=%d current=%d first=%d\n",
+				count, (int)rt_interaction_glow_selected->value, entity->index,
+				rt_interaction_glow_candidates[0]
+					? (int)rt_interaction_glow_candidates[0]->value : 0 );
+			s_nextInteractionBridgeDebug = gpGlobals->time + 1.0;
+		}
+	}
+	for( int i = 0; i < count; ++i )
+	{
+		const int packed = rt_interaction_glow_candidates[i]
+			? (int)rt_interaction_glow_candidates[i]->value : 0;
+		if( ( packed & 0xFFFF ) != entity->index )
+			continue;
+		const int kind = ( packed >> 16 ) & 0xFF;
+		return INTERACTION_GLOW_MARKER |
+			( ( kind << INTERACTION_GLOW_KIND_SHIFT ) & INTERACTION_GLOW_KIND_MASK ) |
+			( (int)rt_interaction_glow_selected->value == entity->index
+				? INTERACTION_GLOW_SELECTED : 0 );
+	}
+	return 0;
+}
+
+enum
+{
+	INTERACTION_KIND_USE = 1,
+	INTERACTION_KIND_ITEM,
+	INTERACTION_KIND_AMMO,
+	INTERACTION_KIND_WEAPON,
+	INTERACTION_KIND_MEDKIT,
+	INTERACTION_KIND_ENEMY,
+};
+
 
 typedef enum
 {
@@ -2283,6 +2389,8 @@ static struct
     RgMeshInfo               mesh;
     RgMeshPrimitiveInfo      primitive;
     RgEditorInfo             additional;
+	int                       interaction_glow_tag;
+	float                     outline_view_projection[16];
 } rt_batch = { 0 };
 
 static qboolean AreTransformsAlwaysIdentity( rt_batchtype_t type )
@@ -2423,6 +2531,78 @@ static void FlushBatch()
         {
             RgResult r = rgUploadMeshPrimitive( rg_instance, &rt_batch.mesh, &rt_batch.primitive );
             RG_CHECK( r );
+
+			if( rt_batch.interaction_glow_tag &&
+				RT_CVAR_TO_BOOL( rt_interact_outline_enabled ) )
+			{
+				const int kind = ( rt_batch.interaction_glow_tag &
+					INTERACTION_GLOW_KIND_MASK ) >> INTERACTION_GLOW_KIND_SHIFT;
+				const qboolean selected =
+					( rt_batch.interaction_glow_tag & INTERACTION_GLOW_SELECTED ) != 0;
+				int red = 255, green = 255, blue = 255;
+				if( selected )
+				{
+					red = RT_CVAR_TO_INT32( rt_interact_outline_selected_r );
+					green = RT_CVAR_TO_INT32( rt_interact_outline_selected_g );
+					blue = RT_CVAR_TO_INT32( rt_interact_outline_selected_b );
+				}
+				else if( kind == INTERACTION_KIND_USE )
+				{
+					red = RT_CVAR_TO_INT32( rt_interact_outline_use_r );
+					green = RT_CVAR_TO_INT32( rt_interact_outline_use_g );
+					blue = RT_CVAR_TO_INT32( rt_interact_outline_use_b );
+				}
+				else if( kind == INTERACTION_KIND_MEDKIT )
+				{
+					red = RT_CVAR_TO_INT32( rt_interact_outline_medkit_r );
+					green = RT_CVAR_TO_INT32( rt_interact_outline_medkit_g );
+					blue = RT_CVAR_TO_INT32( rt_interact_outline_medkit_b );
+				}
+				else if( kind == INTERACTION_KIND_ENEMY )
+				{
+					red = RT_CVAR_TO_INT32( rt_interact_outline_enemy_r );
+					green = RT_CVAR_TO_INT32( rt_interact_outline_enemy_g );
+					blue = RT_CVAR_TO_INT32( rt_interact_outline_enemy_b );
+				}
+				else
+				{
+					red = RT_CVAR_TO_INT32( rt_interact_outline_item_r );
+					green = RT_CVAR_TO_INT32( rt_interact_outline_item_g );
+					blue = RT_CVAR_TO_INT32( rt_interact_outline_item_b );
+				}
+
+				const float period = Q_max( 0.05f,
+					RT_CVAR_TO_FLOAT( rt_interact_outline_pulse_period ) );
+				const float pulse = 0.5f - 0.5f * cosf(
+					( float )gpGlobals->time * ( 6.28318530718f / period ) );
+				const float pulseAmount = bound( 0.0f,
+					RT_CVAR_TO_FLOAT( rt_interact_outline_pulse_amount ), 1.0f );
+				const float baseOpacity = selected
+					? RT_CVAR_TO_FLOAT( rt_interact_outline_selected_opacity )
+					: RT_CVAR_TO_FLOAT( rt_interact_outline_opacity );
+				const float opacity = bound( 0.0f,
+					baseOpacity * ( 1.0f - pulseAmount + pulseAmount * pulse ), 1.0f );
+				const float width = bound( 0.0f, selected
+					? RT_CVAR_TO_FLOAT( rt_interact_outline_selected_width )
+					: RT_CVAR_TO_FLOAT( rt_interact_outline_width ), 32.0f );
+
+				RgMeshPrimitiveInfo outline = rt_batch.primitive;
+				outline.flags =
+					( rt_batch.primitive.flags & RG_MESH_PRIMITIVE_ALPHA_TESTED ) |
+					RG_MESH_PRIMITIVE_TRANSLUCENT |
+					RG_MESH_PRIMITIVE_INTERACTION_OUTLINE |
+					RG_MESH_PRIMITIVE_CULL_FRONT;
+				outline.color = rgUtilPackColorByte4D(
+					( uint8_t )bound( 0, red, 255 ),
+					( uint8_t )bound( 0, green, 255 ),
+					( uint8_t )bound( 0, blue, 255 ),
+					( uint8_t )( opacity * 255.0f + 0.5f ) );
+				outline.emissive = -width;
+				outline.pEditorInfo = NULL;
+				RgResult outlineResult = rgUploadNonWorldPrimitive( rg_instance,
+					&outline, rt_batch.outline_view_projection, NULL );
+				RG_CHECK( outlineResult );
+			}
         }
         else
         {
@@ -2457,13 +2637,50 @@ static void TryBeginBatch_Finalize( rt_batchtype_t             newtype,
             rt_batch.type      = newtype;
             rt_batch.mesh      = newmesh ? *newmesh : null_mesh;
             rt_batch.primitive = newprimitive ? *newprimitive : null_prim;
+			rt_batch.interaction_glow_tag = 0;
+			memset( rt_batch.outline_view_projection, 0,
+				sizeof( rt_batch.outline_view_projection ) );
             {
                 const RgEditorInfo* src =
                     newprimitive && newprimitive->pEditorInfo ? newprimitive->pEditorInfo : NULL;
 				// assign and relink
                 rt_batch.additional            = src ? *src : null_addt;
-                rt_batch.primitive.pEditorInfo = src ? &rt_batch.additional : NULL;
+				rt_batch.primitive.pEditorInfo = src ? &rt_batch.additional : NULL;
             }
+
+			const int interactionGlowTag = RT_GetInteractionGlowTag( RI.currententity );
+			if( ( rt_batch.type == RT_BATCH_TYPE_STUDIO ||
+				rt_batch.type == RT_BATCH_TYPE_BRUSH ) && interactionGlowTag )
+			{
+				matrix4x4 viewProjection;
+				rt_batch.interaction_glow_tag = interactionGlowTag;
+				if( RT_CVAR_TO_BOOL( rt_interact_outline_debug ) )
+				{
+					static double s_nextInteractionOutlineDebug = 0.0;
+					if( gpGlobals->time >= s_nextInteractionOutlineDebug ||
+						gpGlobals->time + 2.0 < s_nextInteractionOutlineDebug )
+					{
+						gEngfuncs.Con_Printf(
+							"Interaction outline debug: entity=%d kind=%d selected=%d\n",
+							RI.currententity->index,
+							( rt_batch.interaction_glow_tag & INTERACTION_GLOW_KIND_MASK ) >>
+								INTERACTION_GLOW_KIND_SHIFT,
+							( rt_batch.interaction_glow_tag & INTERACTION_GLOW_SELECTED ) != 0 );
+						s_nextInteractionOutlineDebug = gpGlobals->time + 1.0;
+					}
+				}
+				if( rt_batch.type == RT_BATCH_TYPE_BRUSH )
+				{
+					Matrix4x4_Concat( viewProjection, RI.worldviewProjectionMatrix,
+						RI.objectMatrix );
+				}
+				else
+				{
+					Matrix4x4_Copy( viewProjection, RI.worldviewProjectionMatrix );
+				}
+				Matrix4x4_ToArrayFloatGL( viewProjection,
+					rt_batch.outline_view_projection );
+			}
 
 			if( rt_batch.type == RT_BATCH_TYPE_2D )
             {

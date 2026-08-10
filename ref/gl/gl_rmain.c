@@ -231,6 +231,11 @@ R_AddEntity
 */
 qboolean R_AddEntity( struct cl_entity_s *clent, int type )
 {
+#if XASH_RAYTRACING
+	#define INTERACTION_GLOW_MARKER_RMAIN      0x49000000
+	#define INTERACTION_GLOW_MARKER_MASK_RMAIN 0xFF000000
+#endif
+
 	if( !r_drawentities->value )
 		return false; // not allow to drawing
 
@@ -242,6 +247,23 @@ qboolean R_AddEntity( struct cl_entity_s *clent, int type )
 
 	if( !R_ModelOpaque( clent->curstate.rendermode ) && CL_FxBlend( clent ) <= 0 )
 		return true; // invisible
+
+#if XASH_RAYTRACING
+	if( RT_CVAR_TO_BOOL( rt_interact_outline_debug ) &&
+		( clent->curstate.iuser4 & INTERACTION_GLOW_MARKER_MASK_RMAIN ) ==
+		INTERACTION_GLOW_MARKER_RMAIN )
+	{
+		static double s_nextInteractionQueueDebug = 0.0;
+		if( gpGlobals->time >= s_nextInteractionQueueDebug ||
+			gpGlobals->time + 2.0 < s_nextInteractionQueueDebug )
+		{
+			gEngfuncs.Con_Printf(
+				"Interaction queue debug: entity=%d type=%d tag=0x%08X\n",
+				clent->index, type, clent->curstate.iuser4 );
+			s_nextInteractionQueueDebug = gpGlobals->time + 1.0;
+		}
+	}
+#endif
 
 	switch( type )
 	{
