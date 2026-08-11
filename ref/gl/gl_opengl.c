@@ -973,6 +973,8 @@ void GL_InitCommands( void )
 	CVAR_DEF_T( rt_interact_outline_selected_opacity, "0.96", "selected interaction outline opacity" )
 	CVAR_DEF_T( rt_interact_outline_pulse_period, "1.20", "interaction outline pulse period" )
 	CVAR_DEF_T( rt_interact_outline_pulse_amount, "0.12", "interaction outline pulse strength" )
+	CVAR_DEF_T( rt_interact_outline_items_xray, "0", "draw item outlines through solid geometry" )
+	CVAR_DEF_T( rt_interact_outline_enemies_xray, "0", "draw enemy outlines through solid geometry" )
 	CVAR_DEF_T( rt_interact_outline_item_r, "96", "item outline red" )
 	CVAR_DEF_T( rt_interact_outline_item_g, "190", "item outline green" )
 	CVAR_DEF_T( rt_interact_outline_item_b, "255", "item outline blue" )
@@ -2591,6 +2593,11 @@ static void FlushBatch()
 					( rt_batch.primitive.flags & RG_MESH_PRIMITIVE_ALPHA_TESTED ) |
 					RG_MESH_PRIMITIVE_TRANSLUCENT |
 					RG_MESH_PRIMITIVE_INTERACTION_OUTLINE;
+				const qboolean xray = kind == INTERACTION_KIND_ENEMY
+					? RT_CVAR_TO_BOOL( rt_interact_outline_enemies_xray )
+					: RT_CVAR_TO_BOOL( rt_interact_outline_items_xray );
+				if( !xray )
+					outline.flags |= RG_MESH_PRIMITIVE_INTERACTION_OUTLINE_OCCLUDED;
 				outline.color = rgUtilPackColorByte4D(
 					( uint8_t )bound( 0, red, 255 ),
 					( uint8_t )bound( 0, green, 255 ),

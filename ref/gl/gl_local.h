@@ -842,6 +842,8 @@ typedef struct rt_cvars_t
 		rt_interact_outline_selected_opacity,
 		rt_interact_outline_pulse_period,
 		rt_interact_outline_pulse_amount,
+		rt_interact_outline_items_xray,
+		rt_interact_outline_enemies_xray,
 		rt_interact_outline_item_r,
 		rt_interact_outline_item_g,
 		rt_interact_outline_item_b,

@@ -497,7 +497,6 @@ static const RgEditorCvarDescriptor rt_editor_base_cvars[] =
 	CVAR_BOOL( "sv_interact_require_los", "Require line of sight", "Gameplay / Interaction", 1.0f ),
 	CVAR_BOOL( "sv_interact_outline_enemies", "Outline enemies", "Gameplay / Interaction", 0.0f ),
 	CVAR_FLOAT( "sv_interact_enemy_radius", "Enemy outline radius", "Gameplay / Interaction", 640.0f, 16.0f, 4096.0f, 8.0f, "%.0f u" ),
-	CVAR_BOOL( "sv_interact_enemy_require_los", "Enemy outlines require line of sight", "Gameplay / Interaction", 0.0f ),
 	CVAR_BOOL( "sv_interact_debug", "Log targeting state", "Interaction / Diagnostics", 0.0f ),
 
 	CVAR_BOOL( "hud_interact_prompt_enabled", "Prompt enabled", "HUD / Interaction Prompt", 1.0f ),
@@ -532,6 +531,8 @@ static const RgEditorCvarDescriptor rt_editor_base_cvars[] =
 	CVAR_FLOAT( "rt_interact_outline_selected_opacity", "Selected opacity", "Interaction / Outlines", 0.96f, 0.0f, 1.0f, 0.01f, "%.2f" ),
 	CVAR_FLOAT( "rt_interact_outline_pulse_period", "Pulse period", "Interaction / Outlines", 1.20f, 0.05f, 10.0f, 0.05f, "%.2f s" ),
 	CVAR_FLOAT( "rt_interact_outline_pulse_amount", "Pulse strength", "Interaction / Outlines", 0.12f, 0.0f, 1.0f, 0.01f, "%.2f" ),
+	CVAR_BOOL( "rt_interact_outline_items_xray", "Items visible through walls", "Interaction / Outlines", 0.0f ),
+	CVAR_BOOL( "rt_interact_outline_enemies_xray", "Enemies visible through walls", "Interaction / Outlines", 0.0f ),
 	CVAR_INT( "rt_interact_outline_item_r", "Item red", "Interaction / Outlines", 96, 0, 255 ),
 	CVAR_INT( "rt_interact_outline_item_g", "Item green", "Interaction / Outlines", 190, 0, 255 ),
 	CVAR_INT( "rt_interact_outline_item_b", "Item blue", "Interaction / Outlines", 255, 0, 255 ),
