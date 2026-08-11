@@ -458,6 +458,7 @@ static const RgEditorCvarDescriptor rt_editor_base_cvars[] =
 	CVAR_INT( "hud_stamina_width", "Width", "HUD / Stamina", 260, 16, 2048 ),
 	CVAR_INT( "hud_stamina_thickness", "Thickness", "HUD / Stamina", 3, 1, 64 ),
 	CVAR_FLOAT( "hud_stamina_smoothing", "Animation response", "HUD / Stamina", 14.0f, 0.1f, 60.0f, 0.1f, "%.1f" ),
+	CVAR_FLOAT( "hud_stamina_fade_response", "Visibility fade response", "HUD / Stamina", 12.0f, 0.1f, 60.0f, 0.1f, "%.1f" ),
 	CVAR_FLOAT( "hud_stamina_low_threshold", "Low stamina threshold fraction", "HUD / Stamina", 0.30f, 0.0f, 1.0f, 0.01f, "%.2f" ),
 	CVAR_INT( "hud_stamina_color_red", "Bar color red", "HUD / Stamina", 236, 0, 255 ),
 	CVAR_INT( "hud_stamina_color_green", "Bar color green", "HUD / Stamina", 207, 0, 255 ),
