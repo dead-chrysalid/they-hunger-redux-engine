@@ -491,6 +491,7 @@ static const RgEditorCvarDescriptor rt_editor_base_cvars[] =
 	CVAR_FLOAT( "sv_interact_outline_radius", "Nearby outline radius", "Gameplay / Interaction", 240.0f, 16.0f, 2048.0f, 4.0f, "%.0f u" ),
 	CVAR_FLOAT( "sv_interact_use_range", "Interaction range", "Gameplay / Interaction", 96.0f, 16.0f, 512.0f, 2.0f, "%.0f u" ),
 	CVAR_FLOAT( "sv_interact_aim_dot", "Selection aim threshold", "Gameplay / Interaction", 0.55f, -1.0f, 1.0f, 0.01f, "%.2f" ),
+	CVAR_BOOL( "sv_interact_hitbox_targeting", "Model hitbox targeting", "Gameplay / Interaction", 1.0f ),
 	CVAR_FLOAT( "sv_interact_update_rate", "Network update rate", "Gameplay / Interaction", 12.0f, 1.0f, 60.0f, 1.0f, "%.0f Hz" ),
 	CVAR_INT( "sv_interact_max_candidates", "Maximum outlined objects", "Gameplay / Interaction", 16, 1, 32 ),
 	CVAR_BOOL( "sv_interact_require_los", "Require line of sight", "Gameplay / Interaction", 1.0f ),
