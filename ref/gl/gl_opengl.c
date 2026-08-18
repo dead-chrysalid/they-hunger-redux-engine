@@ -46,6 +46,10 @@ cvar_t	*tracerwidth;
 #if XASH_RAYTRACING
 static cvar_t *rt_interaction_glow_count;
 static cvar_t *rt_interaction_glow_selected;
+static cvar_t *rt_interaction_glow_item_full_distance;
+static cvar_t *rt_interaction_glow_item_zero_distance;
+static cvar_t *rt_interaction_glow_enemy_full_distance;
+static cvar_t *rt_interaction_glow_enemy_zero_distance;
 static cvar_t *rt_interaction_glow_candidates[32];
 static const char *rt_interaction_glow_candidate_names[32] =
 {
@@ -969,12 +973,21 @@ void GL_InitCommands( void )
 	CVAR_DEF_T( rt_interact_outline_enabled, "1", "draw interaction outlines" )
 	CVAR_DEF_T( rt_interact_outline_width, "3.0", "nearby interaction outline width in pixels" )
 	CVAR_DEF_T( rt_interact_outline_selected_width, "16.0", "selected interaction outline width in pixels" )
+	CVAR_DEF_T( rt_interact_outline_core_width, "1.25", "nearby interaction outline white core width in pixels" )
+	CVAR_DEF_T( rt_interact_outline_selected_core_width, "1.75", "selected interaction outline white core width in pixels" )
+	CVAR_DEF_T( rt_interact_outline_core_intensity, "1.40", "interaction outline white core intensity" )
+	CVAR_DEF_T( rt_interact_outline_halo_falloff, "2.0", "interaction outline analytic halo falloff" )
+	CVAR_DEF_T( rt_interact_outline_core_r, "255", "interaction outline core red" )
+	CVAR_DEF_T( rt_interact_outline_core_g, "255", "interaction outline core green" )
+	CVAR_DEF_T( rt_interact_outline_core_b, "255", "interaction outline core blue" )
+	CVAR_DEF_T( rt_interact_outline_diagnostic_view, "0", "interaction outline diagnostic view" )
 	CVAR_DEF_T( rt_interact_outline_opacity, "0.78", "nearby interaction outline opacity" )
 	CVAR_DEF_T( rt_interact_outline_selected_opacity, "0.96", "selected interaction outline opacity" )
 	CVAR_DEF_T( rt_interact_outline_pulse_period, "1.20", "interaction outline pulse period" )
 	CVAR_DEF_T( rt_interact_outline_pulse_amount, "0.12", "interaction outline pulse strength" )
 	CVAR_DEF_T( rt_interact_outline_items_xray, "0", "draw item outlines through solid geometry" )
 	CVAR_DEF_T( rt_interact_outline_enemies_xray, "0", "draw enemy outlines through solid geometry" )
+	CVAR_DEF_T( rt_interact_outline_friendlies_xray, "0", "draw friendly NPC outlines through solid geometry" )
 	CVAR_DEF_T( rt_interact_outline_item_r, "96", "item outline red" )
 	CVAR_DEF_T( rt_interact_outline_item_g, "190", "item outline green" )
 	CVAR_DEF_T( rt_interact_outline_item_b, "255", "item outline blue" )
@@ -987,6 +1000,9 @@ void GL_InitCommands( void )
 	CVAR_DEF_T( rt_interact_outline_enemy_r, "255", "enemy outline red" )
 	CVAR_DEF_T( rt_interact_outline_enemy_g, "80", "enemy outline green" )
 	CVAR_DEF_T( rt_interact_outline_enemy_b, "70", "enemy outline blue" )
+	CVAR_DEF_T( rt_interact_outline_friendly_r, "92", "friendly NPC outline red" )
+	CVAR_DEF_T( rt_interact_outline_friendly_g, "230", "friendly NPC outline green" )
+	CVAR_DEF_T( rt_interact_outline_friendly_b, "128", "friendly NPC outline blue" )
 	CVAR_DEF_T( rt_interact_outline_selected_r, "255", "selected outline red" )
 	CVAR_DEF_T( rt_interact_outline_selected_g, "238", "selected outline green" )
 	CVAR_DEF_T( rt_interact_outline_selected_b, "174", "selected outline blue" )
@@ -995,6 +1011,18 @@ void GL_InitCommands( void )
 		"_interaction_glow_count", "0", 0, "internal interaction outline candidate count" );
 	rt_interaction_glow_selected = gEngfuncs.Cvar_Get(
 		"_interaction_glow_selected", "0", 0, "internal selected interaction entity" );
+	rt_interaction_glow_item_full_distance = gEngfuncs.Cvar_Get(
+		"_interaction_glow_item_full_distance", "200", 0,
+		"internal item interaction outline full-opacity distance" );
+	rt_interaction_glow_item_zero_distance = gEngfuncs.Cvar_Get(
+		"_interaction_glow_item_zero_distance", "240", 0,
+		"internal item interaction outline zero-opacity distance" );
+	rt_interaction_glow_enemy_full_distance = gEngfuncs.Cvar_Get(
+		"_interaction_glow_enemy_full_distance", "540", 0,
+		"internal enemy interaction outline full-opacity distance" );
+	rt_interaction_glow_enemy_zero_distance = gEngfuncs.Cvar_Get(
+		"_interaction_glow_enemy_zero_distance", "640", 0,
+		"internal enemy interaction outline zero-opacity distance" );
 	for( int interactionGlowIndex = 0; interactionGlowIndex < 32; ++interactionGlowIndex )
 	{
 		rt_interaction_glow_candidates[interactionGlowIndex] = gEngfuncs.Cvar_Get(
@@ -2280,14 +2308,14 @@ static uint32_t MakeTempEntityIndex( const cl_entity_t* ent )
 
 static int RT_GetInteractionGlowTag( const cl_entity_t *entity )
 {
-	if( !entity )
+	if( !entity || entity->index <= 0 )
 		return 0;
-	if( ( entity->curstate.iuser4 & INTERACTION_GLOW_MARKER_MASK ) ==
-		INTERACTION_GLOW_MARKER )
-		return entity->curstate.iuser4;
 	if( !rt_interaction_glow_count || !rt_interaction_glow_selected )
 		return 0;
 
+	// The bridge list is authoritative. curstate.iuser4 is only a transient
+	// client-render hint and can outlive the server candidate that created it,
+	// especially on brush entities that leave the HUD_AddEntity path.
 	const int count = bound( 0, (int)rt_interaction_glow_count->value, 32 );
 	if( RT_CVAR_TO_BOOL( rt_interact_outline_debug ) && count > 0 )
 	{
@@ -2326,7 +2354,61 @@ enum
 	INTERACTION_KIND_WEAPON,
 	INTERACTION_KIND_MEDKIT,
 	INTERACTION_KIND_ENEMY,
+	INTERACTION_KIND_FRIENDLY,
 };
+
+static float RT_InteractionDistanceAlphaForRange( float distance, float fullDistance,
+	float zeroDistance )
+{
+	zeroDistance = Q_max( 0.0f, zeroDistance );
+	fullDistance = bound( 0.0f, fullDistance, zeroDistance );
+	if( zeroDistance <= 0.0f || distance >= zeroDistance )
+		return 0.0f;
+	if( distance <= fullDistance || fullDistance >= zeroDistance )
+		return 1.0f;
+
+	const float t = bound( 0.0f,
+		( distance - fullDistance ) / ( zeroDistance - fullDistance ), 1.0f );
+	const float smooth = t * t * ( 3.0f - 2.0f * t );
+	return 1.0f - smooth;
+}
+
+static float RT_InteractionBoundsDistance( const cl_entity_t *entity )
+{
+	vec3_t localMins, localMaxs, nearest, delta;
+	VectorCopy( entity->curstate.mins, localMins );
+	VectorCopy( entity->curstate.maxs, localMaxs );
+	if( localMins[0] == 0.0f && localMins[1] == 0.0f && localMins[2] == 0.0f &&
+		localMaxs[0] == 0.0f && localMaxs[1] == 0.0f && localMaxs[2] == 0.0f &&
+		entity->model )
+	{
+		VectorCopy( entity->model->mins, localMins );
+		VectorCopy( entity->model->maxs, localMaxs );
+	}
+
+	for( int axis = 0; axis < 3; ++axis )
+	{
+		const float worldMin = entity->origin[axis] + Q_min( localMins[axis], localMaxs[axis] );
+		const float worldMax = entity->origin[axis] + Q_max( localMins[axis], localMaxs[axis] );
+		nearest[axis] = bound( worldMin, RI.vieworg[axis], worldMax );
+	}
+	VectorSubtract( RI.vieworg, nearest, delta );
+	return VectorLength( delta );
+}
+
+static float RT_InteractionDistanceAlpha( const cl_entity_t *entity, int kind )
+{
+	const qboolean actor = kind == INTERACTION_KIND_ENEMY ||
+		kind == INTERACTION_KIND_FRIENDLY;
+	const cvar_t *fullCvar = actor ? rt_interaction_glow_enemy_full_distance
+		: rt_interaction_glow_item_full_distance;
+	const cvar_t *zeroCvar = actor ? rt_interaction_glow_enemy_zero_distance
+		: rt_interaction_glow_item_zero_distance;
+	const float fullDistance = fullCvar ? fullCvar->value : ( actor ? 540.0f : 200.0f );
+	const float zeroDistance = zeroCvar ? zeroCvar->value : ( actor ? 640.0f : 240.0f );
+	return RT_InteractionDistanceAlphaForRange(
+		RT_InteractionBoundsDistance( entity ), fullDistance, zeroDistance );
+}
 
 
 typedef enum
@@ -2392,6 +2474,7 @@ static struct
 	RgMeshPrimitiveInfo      primitive;
 	RgEditorInfo             additional;
 	int                       interaction_glow_tag;
+	float                     interaction_glow_distance_alpha;
 	float                     outline_view_projection[16];
 } rt_batch = { 0 };
 
@@ -2535,6 +2618,7 @@ static void FlushBatch()
             RG_CHECK( r );
 
 			if( rt_batch.interaction_glow_tag &&
+				rt_batch.interaction_glow_distance_alpha > 0.0f &&
 				RT_CVAR_TO_BOOL( rt_interact_outline_enabled ) )
 			{
 				const int kind = ( rt_batch.interaction_glow_tag &
@@ -2566,6 +2650,12 @@ static void FlushBatch()
 					green = RT_CVAR_TO_INT32( rt_interact_outline_enemy_g );
 					blue = RT_CVAR_TO_INT32( rt_interact_outline_enemy_b );
 				}
+				else if( kind == INTERACTION_KIND_FRIENDLY )
+				{
+					red = RT_CVAR_TO_INT32( rt_interact_outline_friendly_r );
+					green = RT_CVAR_TO_INT32( rt_interact_outline_friendly_g );
+					blue = RT_CVAR_TO_INT32( rt_interact_outline_friendly_b );
+				}
 				else
 				{
 					red = RT_CVAR_TO_INT32( rt_interact_outline_item_r );
@@ -2582,8 +2672,9 @@ static void FlushBatch()
 				const float baseOpacity = selected
 					? RT_CVAR_TO_FLOAT( rt_interact_outline_selected_opacity )
 					: RT_CVAR_TO_FLOAT( rt_interact_outline_opacity );
-				const float opacity = bound( 0.0f,
-					baseOpacity * ( 1.0f - pulseAmount + pulseAmount * pulse ), 1.0f );
+				const float opacity = bound( 0.0f, baseOpacity *
+					rt_batch.interaction_glow_distance_alpha *
+					( 1.0f - pulseAmount + pulseAmount * pulse ), 1.0f );
 				const float width = bound( 0.0f, selected
 					? RT_CVAR_TO_FLOAT( rt_interact_outline_selected_width )
 					: RT_CVAR_TO_FLOAT( rt_interact_outline_width ), 32.0f );
@@ -2593,9 +2684,13 @@ static void FlushBatch()
 					( rt_batch.primitive.flags & RG_MESH_PRIMITIVE_ALPHA_TESTED ) |
 					RG_MESH_PRIMITIVE_TRANSLUCENT |
 					RG_MESH_PRIMITIVE_INTERACTION_OUTLINE;
+				if( selected )
+					outline.flags |= RG_MESH_PRIMITIVE_INTERACTION_OUTLINE_SELECTED;
 				const qboolean xray = kind == INTERACTION_KIND_ENEMY
 					? RT_CVAR_TO_BOOL( rt_interact_outline_enemies_xray )
-					: RT_CVAR_TO_BOOL( rt_interact_outline_items_xray );
+					: kind == INTERACTION_KIND_FRIENDLY
+						? RT_CVAR_TO_BOOL( rt_interact_outline_friendlies_xray )
+						: RT_CVAR_TO_BOOL( rt_interact_outline_items_xray );
 				if( !xray )
 					outline.flags |= RG_MESH_PRIMITIVE_INTERACTION_OUTLINE_OCCLUDED;
 				outline.color = rgUtilPackColorByte4D(
@@ -2644,6 +2739,7 @@ static void TryBeginBatch_Finalize( rt_batchtype_t             newtype,
             rt_batch.mesh      = newmesh ? *newmesh : null_mesh;
 			rt_batch.primitive = newprimitive ? *newprimitive : null_prim;
 			rt_batch.interaction_glow_tag = 0;
+			rt_batch.interaction_glow_distance_alpha = 0.0f;
 			memset( rt_batch.outline_view_projection, 0,
 				sizeof( rt_batch.outline_view_projection ) );
             {
@@ -2654,29 +2750,35 @@ static void TryBeginBatch_Finalize( rt_batchtype_t             newtype,
 				rt_batch.primitive.pEditorInfo = src ? &rt_batch.additional : NULL;
             }
 
-			const int interactionGlowTag = RT_GetInteractionGlowTag( RI.currententity );
-			if( ( rt_batch.type == RT_BATCH_TYPE_STUDIO ||
-				rt_batch.type == RT_BATCH_TYPE_BRUSH ) && interactionGlowTag )
+			const qboolean interactionGlowEligible =
+				rt_batch.type == RT_BATCH_TYPE_STUDIO ||
+				( rt_batch.type == RT_BATCH_TYPE_BRUSH && RI.currentmodel &&
+					RI.currentmodel != WORLDMODEL );
+			const int interactionGlowTag = interactionGlowEligible
+				? RT_GetInteractionGlowTag( RI.currententity )
+				: 0;
+			if( interactionGlowTag )
 			{
 				rt_batch.interaction_glow_tag = interactionGlowTag;
+				const int interactionKind = ( interactionGlowTag &
+					INTERACTION_GLOW_KIND_MASK ) >> INTERACTION_GLOW_KIND_SHIFT;
+				rt_batch.interaction_glow_distance_alpha =
+					RT_InteractionDistanceAlpha( RI.currententity, interactionKind );
 				matrix4x4 viewProjection;
-				if( rt_batch.type == RT_BATCH_TYPE_STUDIO ||
-					( rt_batch.type == RT_BATCH_TYPE_BRUSH && RI.currentmodel != WORLDMODEL ) )
-				{
-					Matrix4x4_Concat( viewProjection, RI.worldviewProjectionMatrix,
-						RI.objectMatrix );
-				}
-				else
-				{
-					Matrix4x4_Copy( viewProjection, RI.worldviewProjectionMatrix );
-				}
+				Matrix4x4_Concat( viewProjection, RI.worldviewProjectionMatrix,
+					RI.objectMatrix );
 
-				// Vulkan's positive-height viewport reverses clip-space Y relative to OpenGL.
-				// The ordinary 2D path applies the same correction while building its ortho
-				// matrix; world/entity batches need it explicitly for swapchain overlays.
+				// This custom matrix comes from the OpenGL renderer, but RayTracedGL1 consumes
+				// it as a Vulkan projection. Convert both clip-space conventions here:
+				// positive-height Vulkan viewports invert Y, and Vulkan depth is [0, w]
+				// instead of OpenGL's [-w, w]. Without the Z remap, outline depth decodes to
+				// roughly half the real view distance and occlusion only works at particular
+				// object/wall separations.
 				for( int column = 0; column < 4; ++column )
 				{
 					viewProjection[1][column] = -viewProjection[1][column];
+					viewProjection[2][column] = 0.5f *
+						( viewProjection[2][column] + viewProjection[3][column] );
 				}
 				Matrix4x4_ToArrayFloatGL( viewProjection,
 					rt_batch.outline_view_projection );
