@@ -506,9 +506,16 @@ void V_PostRender( void )
 		ref.dllFuncs.R_ShowTextures();
 		R_ShowTree();
 		Con_DrawConsole();
+#if XASH_RAYTRACING
+		// MainUI is composited after the menu blur. Individual root layers can
+		// temporarily opt back into the blur-eligible layer for modal windows.
+		Cvar_SetValue( "_rt_menu_overlay", 1.0f );
+#endif
 		UI_UpdateMenu( host.realtime );
 #if !XASH_RAYTRACING
 		Con_DrawVersion();
+#else
+		Cvar_SetValue( "_rt_menu_overlay", 0.0f );
 #endif
 		Con_DrawDebug(); // must be last
 		Touch_Draw();

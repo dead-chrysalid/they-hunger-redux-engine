@@ -1107,6 +1107,7 @@ void GL_InitCommands( void )
 	CVAR_DEF_T( rt_ef_vintage,				"0",	"[0, 4] vintage effects, disabled if rt_renderscale>0" )
 	CVAR_DEF_T( rt_ef_water,				"1",	"warp screen while under water" )
 	CVAR_DEF_T( _rt_menu_blur,				"0",	"internal menu background blur" )
+	CVAR_DEF_T( _rt_menu_overlay,			"0",	"internal sharp menu overlay layer" )
 	CVAR_DEF_T( rt_killfx_distortion,		"1",	"enable the kill effect lens pulse" )
 	CVAR_DEF_T( rt_killfx_lens_strength,	"0.12", "kill effect fisheye zoom strength" )
 	CVAR_DEF_T( rt_killfx_distortion_duration,	"0.08",	"kill effect distortion hold time in seconds" )
@@ -2818,8 +2819,9 @@ static void TryBeginBatch( RgUtilImScratchTopology glbegin_topology )
         RgMeshPrimitiveInfo prim = {
             .pPrimitiveNameInMesh = NULL,
             .primitiveIndexInMesh = 0,
-            .flags                = ( rt_raster_blend ? RG_MESH_PRIMITIVE_TRANSLUCENT : 0 ) |
-                     ( rt_alphatest ? RG_MESH_PRIMITIVE_ALPHA_TESTED : 0 ),
+			.flags                = ( rt_raster_blend ? RG_MESH_PRIMITIVE_TRANSLUCENT : 0 ) |
+					 ( rt_alphatest ? RG_MESH_PRIMITIVE_ALPHA_TESTED : 0 ) |
+					 ( RT_CVAR_TO_BOOL( _rt_menu_overlay ) ? RG_MESH_PRIMITIVE_UI_OVERLAY : 0 ),
             .pTextureName = GetCurrentTexture2DName(),
             .textureFrame = 0,
             .color        = rgUtilPackColorByte4D( 255, 255, 255, 255 ),

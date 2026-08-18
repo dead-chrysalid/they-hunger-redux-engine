@@ -950,6 +950,7 @@ typedef struct rt_cvars_t
 		rt_ef_vintage,
 		rt_ef_water,
 		_rt_menu_blur,
+		_rt_menu_overlay,
 		rt_killfx_distortion,
 		rt_killfx_lens_strength,
 		rt_killfx_distortion_duration,
