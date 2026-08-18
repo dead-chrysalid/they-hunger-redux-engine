@@ -1808,6 +1808,12 @@ void R_EndFrame( void )
         .intensity             = RT_CVAR_TO_FLOAT( rt_ef_chraber ),
     };
 
+	RgPostEffectRadialBlur menu_blur_effect = {
+		.isActive = RT_CVAR_TO_BOOL( _rt_menu_blur ),
+		.transitionDurationIn = 0.18f,
+		.transitionDurationOut = 0.18f,
+	};
+
     RgPostEffectWaves waves_effect = {
         .isActive              = cameramedia != RG_MEDIA_TYPE_VACUUM,
         .transitionDurationIn  = 0.1f,
@@ -1860,6 +1866,7 @@ void R_EndFrame( void )
 		.sType                = RG_STRUCTURE_TYPE_POSTEFFECTS,
 		.pNext                = &interaction_outline_params,
         .pChromaticAberration = &chromatic_aberration_effect,
+		.pRadialBlur           = &menu_blur_effect,
 		.pColorTint            = &killfx_lens,
         .pTeleport            = RT_IsPortalPosteffectActive() ? &teleport_effect : NULL,
         .pWaves = ENGINE_GET_PARM( PARM_CONNSTATE ) == ca_active ? &waves_effect : NULL,
