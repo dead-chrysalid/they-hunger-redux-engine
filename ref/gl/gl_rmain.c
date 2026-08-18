@@ -231,6 +231,11 @@ R_AddEntity
 */
 qboolean R_AddEntity( struct cl_entity_s *clent, int type )
 {
+#if XASH_RAYTRACING
+	#define INTERACTION_GLOW_MARKER_RMAIN      0x49000000
+	#define INTERACTION_GLOW_MARKER_MASK_RMAIN 0xFF000000
+#endif
+
 	if( !r_drawentities->value )
 		return false; // not allow to drawing
 
@@ -242,6 +247,23 @@ qboolean R_AddEntity( struct cl_entity_s *clent, int type )
 
 	if( !R_ModelOpaque( clent->curstate.rendermode ) && CL_FxBlend( clent ) <= 0 )
 		return true; // invisible
+
+#if XASH_RAYTRACING
+	if( RT_CVAR_TO_BOOL( rt_interact_outline_debug ) &&
+		( clent->curstate.iuser4 & INTERACTION_GLOW_MARKER_MASK_RMAIN ) ==
+		INTERACTION_GLOW_MARKER_RMAIN )
+	{
+		static double s_nextInteractionQueueDebug = 0.0;
+		if( gpGlobals->time >= s_nextInteractionQueueDebug ||
+			gpGlobals->time + 2.0 < s_nextInteractionQueueDebug )
+		{
+			gEngfuncs.Con_Printf(
+				"Interaction queue debug: entity=%d type=%d tag=0x%08X\n",
+				clent->index, type, clent->curstate.iuser4 );
+			s_nextInteractionQueueDebug = gpGlobals->time + 1.0;
+		}
+	}
+#endif
 
 	switch( type )
 	{
@@ -1818,9 +1840,25 @@ void R_EndFrame( void )
         .transitionDurationOut = 0.1f,
     };
 
-    RgDrawFramePostEffectsParams posteffect_params = {
-        .sType                = RG_STRUCTURE_TYPE_POSTEFFECTS,
-        .pNext                = &lightmap_params,
+	RgDrawFrameInteractionOutlineParams interaction_outline_params = {
+		.sType = RG_STRUCTURE_TYPE_INTERACTION_OUTLINE,
+		.pNext = &lightmap_params,
+		.coreColor = {
+			RT_CLAMP( RT_CVAR_TO_FLOAT( rt_interact_outline_core_r ) / 255.0f, 0.0f, 1.0f ),
+			RT_CLAMP( RT_CVAR_TO_FLOAT( rt_interact_outline_core_g ) / 255.0f, 0.0f, 1.0f ),
+			RT_CLAMP( RT_CVAR_TO_FLOAT( rt_interact_outline_core_b ) / 255.0f, 0.0f, 1.0f ),
+		},
+		.nearbyCoreWidth = RT_CLAMP( RT_CVAR_TO_FLOAT( rt_interact_outline_core_width ), 0.1f, 16.0f ),
+		.selectedCoreWidth = RT_CLAMP( RT_CVAR_TO_FLOAT( rt_interact_outline_selected_core_width ), 0.1f, 16.0f ),
+		.coreIntensity = RT_CLAMP( RT_CVAR_TO_FLOAT( rt_interact_outline_core_intensity ), 0.0f, 8.0f ),
+		.haloFalloff = RT_CLAMP( RT_CVAR_TO_FLOAT( rt_interact_outline_halo_falloff ), 0.1f, 16.0f ),
+		.diagnosticView = (RgInteractionOutlineDiagnosticView)bound( 0,
+			RT_CVAR_TO_INT32( rt_interact_outline_diagnostic_view ), 5 ),
+	};
+
+	RgDrawFramePostEffectsParams posteffect_params = {
+		.sType                = RG_STRUCTURE_TYPE_POSTEFFECTS,
+		.pNext                = &interaction_outline_params,
         .pChromaticAberration = &chromatic_aberration_effect,
 		.pColorTint            = &killfx_lens,
         .pTeleport            = RT_IsPortalPosteffectActive() ? &teleport_effect : NULL,
