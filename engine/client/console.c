@@ -138,6 +138,19 @@ typedef struct
 } console_t;
 
 static console_t		con;
+
+typedef struct
+{
+	int line;
+	int character;
+} con_text_position_t;
+
+static con_text_position_t con_source_selection_anchor;
+static con_text_position_t con_source_selection_end;
+static qboolean con_source_output_selection;
+static qboolean con_source_output_dragging;
+static qboolean con_source_input_dragging;
+static qboolean con_source_selection_is_output;
 #if XASH_RAYTRACING
 static qboolean		con_source_blur_active;
 #endif
@@ -204,6 +217,41 @@ static qboolean Con_SourcePointInClose( const con_source_layout_t *layout, int x
 		y >= layout->closeY && y < layout->closeY + layout->closeSize;
 }
 
+static qboolean Con_SourcePointInRect( int x, int y, int left, int top, int width, int height )
+{
+	return x >= left && x < left + width && y >= top && y < top + height;
+}
+
+static int Con_SourceInputTextX( const con_source_layout_t *layout )
+{
+	int inputPadding = Q_max( 8, (int)( 12.0f * layout->scale ));
+	return layout->inputX + inputPadding + con.curFont->charWidths['>'] + con.curFont->charWidths[' '];
+}
+
+static int Con_SourceFieldCursorAtX( const con_source_layout_t *layout, const field_t *field, int mouseX )
+{
+	int cursor = bound( 0, field->scroll, Q_strlen( field->buffer ));
+	int x = Con_SourceInputTextX( layout );
+	while( field->buffer[cursor] )
+	{
+		int next = Con_UtfMoveRight( field->buffer, cursor, field->widthInChars );
+		int width = 0;
+		char character[8];
+		int bytes = Q_min( next - cursor, (int)sizeof( character ) - 1 );
+		memcpy( character, field->buffer + cursor, bytes );
+		character[bytes] = '\0';
+		Con_DrawStringLen( character, &width, NULL );
+		if( mouseX < x + width / 2 ) break;
+		x += width;
+		cursor = next;
+	}
+	return cursor;
+}
+
+static qboolean Con_SourceOutputPositionAtPoint( const con_source_layout_t *layout,
+	int mouseX, int mouseY, con_text_position_t *position );
+static void Con_SourceCopyOutputSelection( void );
+
 void Con_ClearField( field_t *edit );
 void Field_CharEvent( field_t *edit, int ch );
 
@@ -219,6 +267,8 @@ void Con_Clear_f( void )
 {
 	con.lines_count = 0;
 	con.backscroll = 0; // go to end
+	con_source_output_selection = false;
+	con_source_output_dragging = false;
 }
 
 /*
@@ -357,6 +407,8 @@ void Con_ToggleConsole_f( void )
 
 	Con_ClearTyping();
 	Con_ClearNotify();
+	con_source_output_dragging = false;
+	con_source_input_dragging = false;
 
 	if( cls.key_dest == key_console )
 	{
@@ -1497,6 +1549,8 @@ void Con_ClearField( field_t *edit )
 	memset( edit->buffer, 0, MAX_STRING );
 	edit->cursor = 0;
 	edit->scroll = 0;
+	edit->selectionAnchor = 0;
+	edit->selectionEnd = 0;
 }
 
 /*
@@ -1508,6 +1562,51 @@ static void Field_Set( field_t *f, const char *string )
 {
 	f->scroll = 0;
 	f->cursor = Q_strncpy( f->buffer, string, MAX_STRING );
+	f->selectionAnchor = f->cursor;
+	f->selectionEnd = f->cursor;
+}
+
+static qboolean Field_HasSelection( const field_t *edit )
+{
+	return edit->selectionAnchor != edit->selectionEnd;
+}
+
+static void Field_ClearSelection( field_t *edit )
+{
+	edit->selectionAnchor = edit->cursor;
+	edit->selectionEnd = edit->cursor;
+}
+
+static void Field_SelectionBounds( const field_t *edit, int *start, int *end )
+{
+	*start = Q_min( edit->selectionAnchor, edit->selectionEnd );
+	*end = Q_max( edit->selectionAnchor, edit->selectionEnd );
+}
+
+static qboolean Field_DeleteSelection( field_t *edit )
+{
+	int start, end;
+	int len;
+	if( !Field_HasSelection( edit )) return false;
+	Field_SelectionBounds( edit, &start, &end );
+	len = Q_strlen( edit->buffer );
+	memmove( edit->buffer + start, edit->buffer + end, len - end + 1 );
+	edit->cursor = start;
+	Field_ClearSelection( edit );
+	edit->scroll = Q_min( edit->scroll, edit->cursor );
+	return true;
+}
+
+static void Field_CopySelection( const field_t *edit )
+{
+	int start, end;
+	char selected[MAX_STRING];
+	if( !Field_HasSelection( edit )) return;
+	Field_SelectionBounds( edit, &start, &end );
+	end = Q_min( end, start + (int)sizeof( selected ) - 1 );
+	memcpy( selected, edit->buffer + start, end - start );
+	selected[end - start] = '\0';
+	Platform_SetClipboardText( selected );
 }
 
 /*
@@ -1523,6 +1622,7 @@ void Field_Paste( field_t *edit )
 	cbd = Sys_GetClipboardData();
 	if( !cbd ) return;
 
+	Field_DeleteSelection( edit );
 	// send as if typed, so insert / overstrike works properly
 	pasteLen = Q_strlen( cbd );
 	for( i = 0; i < pasteLen; i++ )
@@ -1539,6 +1639,20 @@ static void Field_GoTo( field_t *edit, int pos )
 {
 	edit->cursor = pos;
 	edit->scroll = Q_max( 0, edit->cursor - edit->widthInChars );
+}
+
+static void Field_MoveSelection( field_t *edit, int oldCursor, qboolean extend )
+{
+	if( extend )
+	{
+		if( !Field_HasSelection( edit ))
+			edit->selectionAnchor = oldCursor;
+		edit->selectionEnd = edit->cursor;
+	}
+	else
+	{
+		Field_ClearSelection( edit );
+	}
 }
 
 /*
@@ -1566,6 +1680,7 @@ void Field_KeyDownEvent( field_t *edit, int key )
 
 	if( key == K_DEL )
 	{
+		if( Field_DeleteSelection( edit )) return;
 		if( edit->cursor < len )
 			memmove( edit->buffer + edit->cursor, edit->buffer + edit->cursor + 1, len - edit->cursor );
 		return;
@@ -1573,6 +1688,7 @@ void Field_KeyDownEvent( field_t *edit, int key )
 
 	if( key == K_BACKSPACE )
 	{
+		if( Field_DeleteSelection( edit )) return;
 		if( edit->cursor > 0 )
 		{
 			int newcursor = Con_UtfMoveLeft( edit->buffer, edit->cursor );
@@ -1585,28 +1701,60 @@ void Field_KeyDownEvent( field_t *edit, int key )
 
 	if( key == K_RIGHTARROW )
 	{
+		int oldCursor = edit->cursor;
+		if( Field_HasSelection( edit ) && !Key_IsDown( K_SHIFT ))
+		{
+			int start, end;
+			Field_SelectionBounds( edit, &start, &end );
+			Field_GoTo( edit, end );
+			Field_ClearSelection( edit );
+			return;
+		}
 		if( edit->cursor < len ) edit->cursor = Con_UtfMoveRight( edit->buffer, edit->cursor, edit->widthInChars );
 		if( edit->cursor >= edit->scroll + edit->widthInChars && edit->cursor <= len )
 			edit->scroll++;
+		Field_MoveSelection( edit, oldCursor, Key_IsDown( K_SHIFT ));
 		return;
 	}
 
 	if( key == K_LEFTARROW )
 	{
+		int oldCursor = edit->cursor;
+		if( Field_HasSelection( edit ) && !Key_IsDown( K_SHIFT ))
+		{
+			int start, end;
+			Field_SelectionBounds( edit, &start, &end );
+			Field_GoTo( edit, start );
+			Field_ClearSelection( edit );
+			return;
+		}
 		if( edit->cursor > 0 ) edit->cursor = Con_UtfMoveLeft( edit->buffer, edit->cursor );
 		if( edit->cursor < edit->scroll ) edit->scroll--;
+		Field_MoveSelection( edit, oldCursor, Key_IsDown( K_SHIFT ));
 		return;
 	}
 
-	if( key == K_HOME || ( Q_tolower(key) == 'a' && Key_IsDown( K_CTRL )))
+	if( Q_tolower(key) == 'a' && Key_IsDown( K_CTRL ))
 	{
+		edit->selectionAnchor = 0;
+		edit->selectionEnd = len;
+		Field_GoTo( edit, len );
+		return;
+	}
+
+	if( key == K_HOME )
+	{
+		int oldCursor = edit->cursor;
 		Field_GoTo( edit, 0 );
+		Field_MoveSelection( edit, oldCursor, Key_IsDown( K_SHIFT ));
 		return;
 	}
 
 	if( key == K_END || ( Q_tolower(key) == 'e' && Key_IsDown( K_CTRL )))
 	{
+		int oldCursor = edit->cursor;
 		Field_GoTo( edit, len );
+		Field_MoveSelection( edit, oldCursor, Key_IsDown( K_SHIFT ));
 		return;
 	}
 
@@ -1635,8 +1783,7 @@ void Field_CharEvent( field_t *edit, int ch )
 
 	if( ch == 'c' - 'a' + 1 )
 	{
-		// ctrl-c clears the field
-		Con_ClearField( edit );
+		Field_CopySelection( edit );
 		return;
 	}
 
@@ -1644,8 +1791,9 @@ void Field_CharEvent( field_t *edit, int ch )
 
 	if( ch == 'a' - 'a' + 1 )
 	{
-		// ctrl-a is home
-		Field_GoTo( edit, 0 );
+		edit->selectionAnchor = 0;
+		edit->selectionEnd = len;
+		Field_GoTo( edit, len );
 		return;
 	}
 
@@ -1658,6 +1806,9 @@ void Field_CharEvent( field_t *edit, int ch )
 
 	// ignore any other non printable chars
 	if( ch < 32 ) return;
+
+	Field_DeleteSelection( edit );
+	len = Q_strlen( edit->buffer );
 
 	if( host.key_overstrike )
 	{
@@ -1676,6 +1827,7 @@ void Field_CharEvent( field_t *edit, int ch )
 
 	if( edit->cursor >= edit->widthInChars ) edit->scroll++;
 	if( edit->cursor == len + 1 ) edit->buffer[edit->cursor] = 0;
+	Field_ClearSelection( edit );
 }
 
 /*
@@ -1719,6 +1871,30 @@ void Field_DrawInputLine( int x, int y, field_t *edit )
 
 	memcpy( str, edit->buffer + prestep, drawLen );
 	str[drawLen] = 0;
+
+	if( Field_HasSelection( edit ))
+	{
+		int selectionStart, selectionEnd;
+		int visibleStart, visibleEnd;
+		int prefixWidth = 0, selectionWidth = 0;
+		char savedStart, savedEnd;
+		Field_SelectionBounds( edit, &selectionStart, &selectionEnd );
+		visibleStart = bound( prestep, selectionStart, prestep + drawLen ) - prestep;
+		visibleEnd = bound( prestep, selectionEnd, prestep + drawLen ) - prestep;
+		if( visibleEnd > visibleStart )
+		{
+			savedStart = str[visibleStart];
+			str[visibleStart] = '\0';
+			Con_DrawStringLen( str, &prefixWidth, NULL );
+			str[visibleStart] = savedStart;
+			savedEnd = str[visibleEnd];
+			str[visibleEnd] = '\0';
+			Con_DrawStringLen( str + visibleStart, &selectionWidth, NULL );
+			str[visibleEnd] = savedEnd;
+			ref.dllFuncs.FillRGBABlend( x + prefixWidth, y, selectionWidth,
+				con.curFont->charHeight, 255, 255, 255, 54 );
+		}
+	}
 
 	// save char for overstrike
 	cursorChar = str[edit->cursor - prestep];
@@ -1777,6 +1953,7 @@ static void Con_HistoryUp( con_history_t *self, field_t *in )
 		self->line = Q_max( 0, self->line - 1 );
 
 	*in = self->lines[self->line % CON_HISTORY];
+	Field_ClearSelection( in );
 }
 
 /*
@@ -1791,6 +1968,7 @@ static void Con_HistoryDown( con_history_t *self, field_t *in )
 	if( self->line == self->next )
 		*in = self->backup;
 	else *in = self->lines[self->line % CON_HISTORY];
+	Field_ClearSelection( in );
 }
 
 /*
@@ -1905,6 +2083,44 @@ void Key_Console( int key )
 			Con_ToggleConsole_f();
 			return;
 		}
+
+		if( Con_SourcePointInRect( mouseX, mouseY, layout.inputX, layout.inputY,
+			layout.inputWidth, layout.inputHeight ))
+		{
+			con.input.cursor = Con_SourceFieldCursorAtX( &layout, &con.input, mouseX );
+			con.input.selectionAnchor = con.input.cursor;
+			con.input.selectionEnd = con.input.cursor;
+			con_source_input_dragging = true;
+			con_source_output_dragging = false;
+			con_source_output_selection = false;
+			con_source_selection_is_output = false;
+			return;
+		}
+
+		if( Con_SourcePointInRect( mouseX, mouseY, layout.textX, layout.textY,
+			layout.textWidth, layout.textHeight ) &&
+			Con_SourceOutputPositionAtPoint( &layout, mouseX, mouseY, &con_source_selection_anchor ))
+		{
+			con_source_selection_end = con_source_selection_anchor;
+			con_source_output_selection = false;
+			con_source_output_dragging = true;
+			con_source_input_dragging = false;
+			con_source_selection_is_output = true;
+			Field_ClearSelection( &con.input );
+			return;
+		}
+
+		con_source_output_selection = false;
+		con_source_output_dragging = false;
+		con_source_input_dragging = false;
+		Field_ClearSelection( &con.input );
+	}
+
+	if( Q_tolower( key ) == 'c' && Key_IsDown( K_CTRL ) &&
+		con_source_selection_is_output && con_source_output_selection )
+	{
+		Con_SourceCopyOutputSelection();
+		return;
 	}
 
 	// ctrl-L clears screen
@@ -2311,9 +2527,48 @@ returned.
 static int Con_DrawConsoleLine( int x, int y, int maximumWidth, int lineno )
 {
 	con_lineinfo_t	*li = &CON_LINES( lineno );
+	con_text_position_t start, end;
+	int selectionStart, selectionEnd;
+	int prefixWidth = 0, selectionWidth = 0;
+	const char *cursor;
+	int rawIndex;
 
 	if( !li || !li->start || *li->start == '\1' )
 		return 0;	// this string will be shown only at notify
+
+	start = con_source_selection_anchor;
+	end = con_source_selection_end;
+	if( start.line > end.line || ( start.line == end.line && start.character > end.character ))
+	{
+		con_text_position_t swap = start;
+		start = end;
+		end = swap;
+	}
+	if( con_source_output_selection && lineno >= start.line && lineno <= end.line )
+	{
+		selectionStart = lineno == start.line ? start.character : 0;
+		selectionEnd = lineno == end.line ? end.character : Q_strlen( li->start );
+		selectionStart = bound( 0, selectionStart, Q_strlen( li->start ));
+		selectionEnd = bound( selectionStart, selectionEnd, Q_strlen( li->start ));
+		for( cursor = li->start, rawIndex = 0; *cursor && rawIndex < selectionEnd; )
+		{
+			if( IsColorString( cursor ))
+			{
+				cursor += 2;
+				rawIndex += 2;
+				continue;
+			}
+			if( rawIndex < selectionStart )
+				prefixWidth += con.curFont->charWidths[(unsigned char)*cursor];
+			else
+				selectionWidth += con.curFont->charWidths[(unsigned char)*cursor];
+			cursor++;
+			rawIndex++;
+		}
+		if( prefixWidth < maximumWidth && selectionWidth > 0 )
+			Con_SourceFill( x + prefixWidth, y, Q_min( selectionWidth, maximumWidth - prefixWidth ),
+				con.curFont->charHeight, 255, 255, 255, 54 );
+	}
 
 	if( y >= con.curFont->charHeight )
 		Con_SourceDrawConsoleString( x, y, maximumWidth, li->start, 255 );
@@ -2352,6 +2607,99 @@ static void Con_LastVisibleLine( int *lastline )
 	con.backscroll = lines_seen - 1;
 }
 
+static qboolean Con_SourceOutputPositionAtPoint( const con_source_layout_t *layout,
+	int mouseX, int mouseY, con_text_position_t *position )
+{
+	int line;
+	int y;
+	int textLeft;
+	int textRight;
+	int relativeX;
+	int rawIndex;
+	const char *cursor;
+	con_lineinfo_t *li;
+
+	if( !position || CON_LINES_COUNT <= 0 ) return false;
+	Con_LastVisibleLine( &line );
+	y = layout->textY + layout->textHeight - layout->border - con.curFont->charHeight -
+		Q_max( 5, (int)( 8.0f * layout->scale ));
+	textLeft = layout->textX + Q_max( 8, (int)( 12.0f * layout->scale ));
+	textRight = textLeft + layout->textWidth - Q_max( 16, (int)( 24.0f * layout->scale ));
+
+	for( ; line >= 0 && y >= layout->textY + layout->border; --line )
+	{
+		li = &CON_LINES( line );
+		if( !li || !li->start || *li->start == '\1' ) continue;
+		if( mouseY >= y && mouseY < y + con.curFont->charHeight )
+		{
+			relativeX = bound( textLeft, mouseX, textRight ) - textLeft;
+			cursor = li->start;
+			rawIndex = 0;
+			while( *cursor )
+			{
+				int width;
+				if( IsColorString( cursor ))
+				{
+					cursor += 2;
+					rawIndex += 2;
+					continue;
+				}
+				width = con.curFont->charWidths[(unsigned char)*cursor];
+				if( relativeX < width / 2 ) break;
+				relativeX -= width;
+				cursor++;
+				rawIndex++;
+			}
+			position->line = line;
+			position->character = rawIndex;
+			return true;
+		}
+		y -= con.curFont->charHeight;
+	}
+	return false;
+}
+
+static void Con_SourceCopyOutputSelection( void )
+{
+	con_text_position_t start = con_source_selection_anchor;
+	con_text_position_t end = con_source_selection_end;
+	char *copy;
+	int out = 0;
+	int line;
+
+	if( !con_source_output_selection ) return;
+	if( start.line > end.line || ( start.line == end.line && start.character > end.character ))
+	{
+		con_text_position_t swap = start;
+		start = end;
+		end = swap;
+	}
+	copy = Z_Malloc( CON_TEXTSIZE + 1 );
+	for( line = start.line; line <= end.line && out < CON_TEXTSIZE; ++line )
+	{
+		con_lineinfo_t *li = &CON_LINES( line );
+		int from, to, i;
+		if( !li || !li->start || *li->start == '\1' ) continue;
+		from = line == start.line ? start.character : 0;
+		to = line == end.line ? end.character : Q_strlen( li->start );
+		from = bound( 0, from, Q_strlen( li->start ));
+		to = bound( from, to, Q_strlen( li->start ));
+		for( i = from; i < to && out < CON_TEXTSIZE; ++i )
+		{
+			if( IsColorString( li->start + i ))
+			{
+				i++;
+				continue;
+			}
+			copy[out++] = li->start[i];
+		}
+		if( line < end.line && out < CON_TEXTSIZE ) copy[out++] = '\n';
+	}
+	copy[out] = '\0';
+	Platform_SetClipboardText( copy );
+	Mem_Free( copy );
+}
+
 /*
 ================
 Con_DrawConsole
@@ -2388,6 +2736,31 @@ void Con_DrawSolidConsole( int lines )
 
 	Con_SourceLayout( &layout );
 	Platform_GetMousePos( &mouseX, &mouseY );
+	if( con_source_input_dragging )
+	{
+		if( Key_IsDown( K_MOUSE1 ))
+		{
+			con.input.cursor = Con_SourceFieldCursorAtX( &layout, &con.input, mouseX );
+			con.input.selectionEnd = con.input.cursor;
+		}
+		else con_source_input_dragging = false;
+	}
+	if( con_source_output_dragging )
+	{
+		if( Key_IsDown( K_MOUSE1 ))
+		{
+			con_text_position_t position;
+			int selectionX = bound( layout.textX, mouseX, layout.textX + layout.textWidth - 1 );
+			int selectionY = bound( layout.textY, mouseY, layout.textY + layout.textHeight - 1 );
+			if( Con_SourceOutputPositionAtPoint( &layout, selectionX, selectionY, &position ))
+			{
+				con_source_selection_end = position;
+				con_source_output_selection = position.line != con_source_selection_anchor.line ||
+					position.character != con_source_selection_anchor.character;
+			}
+		}
+		else con_source_output_dragging = false;
+	}
 	closeHovered = Con_SourcePointInClose( &layout, mouseX, mouseY );
 
 #if XASH_RAYTRACING
@@ -2480,7 +2853,7 @@ void Con_DrawSolidConsole( int lines )
 	if( con.backscroll )
 		Q_snprintf( footer, MAX_STRING, "SCROLLBACK: %i LINES  |  MOUSE WHEEL / PGUP / PGDN", con.backscroll );
 	else
-		Q_strncpy( footer, "ENTER EXECUTE  |  TAB COMPLETE  |  MOUSE WHEEL SCROLL", sizeof( footer ));
+		Q_strncpy( footer, "ENTER EXECUTE  |  TAB COMPLETE  |  DRAG TO SELECT  |  CTRL+C COPY", sizeof( footer ));
 	footerY = layout.footerY + ( layout.footerHeight - con.curFont->charHeight ) / 2;
 	Con_SourceDrawConsoleString( layout.inputX, footerY, layout.inputWidth, footer, 145 );
 
@@ -2688,6 +3061,11 @@ void Con_CharEvent( int key )
 	// distribute the key down event to the apropriate handler
 	if( cls.key_dest == key_console )
 	{
+		if( key == 'c' - 'a' + 1 && con_source_selection_is_output && con_source_output_selection )
+		{
+			Con_SourceCopyOutputSelection();
+			return;
+		}
 		Field_CharEvent( &con.input, key );
 	}
 	else if( cls.key_dest == key_message )
