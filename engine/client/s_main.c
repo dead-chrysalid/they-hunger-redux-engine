@@ -600,10 +600,12 @@ static void S_StartSoundWithMixGain( const vec3_t pos, int ent, int chan, sound_
 	{
 		if( check == target_chan ) continue;
 
-		if( check->sfx == sfx && !check->pMixer.sample )
+		if( check->sfx == sfx && !check->pMixer.sample && check->sfx->cache )
 		{
 			// skip up to 0.1 seconds of audio
-			int skip = COM_RandomLong( 0, (long)( 0.1f * check->sfx->cache->rate ));
+			int maximumSkip = Q_min((int)( 0.1f * check->sfx->cache->rate ),
+				Q_max( 0, check->sfx->cache->samples - 1 ));
+			int skip = COM_RandomLong( 0, maximumSkip );
 
 			S_SetSampleStart( check, sfx->cache, skip );
 			break;
