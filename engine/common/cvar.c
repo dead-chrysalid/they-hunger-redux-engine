@@ -254,18 +254,6 @@ int Cvar_UnlinkVar( const char *var_name, int group )
 			continue;
 		}
 
-		// Some player-facing cvars are created by the engine so they remain
-		// available on the title screen, then reused by the client or game DLL.
-		// A DLL may add its lifetime bit while it owns the cvar, but unloading
-		// that DLL must only release the ownership bit, not the engine storage.
-		if( FBitSet( var->flags, FCVAR_ENGINE_OWNED ) &&
-			FBitSet( group, FCVAR_EXTDLL|FCVAR_CLIENTDLL|FCVAR_GAMEUIDLL ))
-		{
-			ClearBits( var->flags, group & ( FCVAR_EXTDLL|FCVAR_CLIENTDLL|FCVAR_GAMEUIDLL ));
-			prev = &var->next;
-			continue;
-		}
-
 #if defined(XASH_HASHED_VARS)
 		BaseCmd_Remove( HM_CVAR, var->name );
 #endif
