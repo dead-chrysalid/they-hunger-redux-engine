@@ -2840,20 +2840,20 @@ void CL_InitLocal( void )
 	// Keep the player-facing mod settings alive before a map (and therefore the
 	// game/client DLL cvars) exists. The DLLs reuse these engine-owned values,
 	// so the title and pause menus always edit the same state.
-	Cvar_Get( "cl_viewbob", "1", FCVAR_ARCHIVE, "enable view bob" );
-	Cvar_Get( "cl_viewmodel_sway", "1", FCVAR_ARCHIVE, "enable viewmodel sway" );
-	Cvar_Get( "cl_recoil_enabled", "1", FCVAR_ARCHIVE, "enable weapon recoil" );
-	Cvar_Get( "cl_recoil_scale", "1", FCVAR_ARCHIVE, "weapon recoil strength" );
-	Cvar_Get( "cl_melee_fx_enabled", "1", FCVAR_ARCHIVE, "enable melee camera effects" );
-	Cvar_Get( "cl_autowepswitch", "1", FCVAR_ARCHIVE|FCVAR_USERINFO, "automatically switch to picked-up weapons" );
-	Cvar_Get( "hud_fastswitch", "0", FCVAR_ARCHIVE, "switch weapons without confirmation" );
-	Cvar_Get( "sv_interact_pickups_require_use", "1", FCVAR_ARCHIVE, "require use for item pickups" );
-	Cvar_Get( "sv_interact_outline_radius", "240", FCVAR_ARCHIVE, "interaction outline range" );
-	Cvar_Get( "hud_interact_prompt_enabled", "1", FCVAR_ARCHIVE, "show interaction prompts" );
-	Cvar_Get( "hit_markers", "1", FCVAR_ARCHIVE, "show hit markers" );
-	Cvar_Get( "killfx_enable", "1", FCVAR_ARCHIVE, "enable kill effects" );
-	Cvar_Get( "killfx_sound", "1", FCVAR_ARCHIVE, "enable kill sound" );
-	Cvar_Get( "killfx_vignette", "1", FCVAR_ARCHIVE, "enable kill vignette" );
+	Cvar_Get( "cl_viewbob", "1", FCVAR_ARCHIVE|FCVAR_ENGINE_OWNED, "enable view bob" );
+	Cvar_Get( "cl_viewmodel_sway", "1", FCVAR_ARCHIVE|FCVAR_ENGINE_OWNED, "enable viewmodel sway" );
+	Cvar_Get( "cl_recoil_enabled", "1", FCVAR_ARCHIVE|FCVAR_ENGINE_OWNED, "enable weapon recoil" );
+	Cvar_Get( "cl_recoil_scale", "1", FCVAR_ARCHIVE|FCVAR_ENGINE_OWNED, "weapon recoil strength" );
+	Cvar_Get( "cl_melee_fx_enabled", "1", FCVAR_ARCHIVE|FCVAR_ENGINE_OWNED, "enable melee camera effects" );
+	Cvar_Get( "cl_autowepswitch", "1", FCVAR_ARCHIVE|FCVAR_USERINFO|FCVAR_ENGINE_OWNED, "automatically switch to picked-up weapons" );
+	Cvar_Get( "hud_fastswitch", "0", FCVAR_ARCHIVE|FCVAR_ENGINE_OWNED, "switch weapons without confirmation" );
+	Cvar_Get( "sv_interact_pickups_require_use", "1", FCVAR_ARCHIVE|FCVAR_ENGINE_OWNED, "require use for item pickups" );
+	Cvar_Get( "sv_interact_outline_radius", "240", FCVAR_ARCHIVE|FCVAR_ENGINE_OWNED, "interaction outline range" );
+	Cvar_Get( "hud_interact_prompt_enabled", "1", FCVAR_ARCHIVE|FCVAR_ENGINE_OWNED, "show interaction prompts" );
+	Cvar_Get( "hit_markers", "1", FCVAR_ARCHIVE|FCVAR_ENGINE_OWNED, "show hit markers" );
+	Cvar_Get( "killfx_enable", "1", FCVAR_ARCHIVE|FCVAR_ENGINE_OWNED, "enable kill effects" );
+	Cvar_Get( "killfx_sound", "1", FCVAR_ARCHIVE|FCVAR_ENGINE_OWNED, "enable kill sound" );
+	Cvar_Get( "killfx_vignette", "1", FCVAR_ARCHIVE|FCVAR_ENGINE_OWNED, "enable kill vignette" );
 	cl_nodelta = Cvar_Get ("cl_nodelta", "0", 0, "disable delta-compression for server messages" );
 	cl_idealpitchscale = Cvar_Get( "cl_idealpitchscale", "0.8", 0, "how much to look up/down slopes and stairs when not using freelook" );
 	cl_solid_players = Cvar_Get( "cl_solid_players", "1", 0, "Make all players not solid (can't traceline them)" );
