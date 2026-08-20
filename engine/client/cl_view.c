@@ -316,6 +316,9 @@ qboolean V_PreRender( void )
 		return false;
 	}
 
+	// Keep renderer timing current even when no world view is drawn (for example,
+	// on the title screen). Post-effect transitions still need to advance there.
+	R_UpdateRefState();
 	ref.dllFuncs.R_BeginFrame( !cl.paused && ( cls.state == ca_active ));
 
 	GL_UpdateSwapInterval( );
