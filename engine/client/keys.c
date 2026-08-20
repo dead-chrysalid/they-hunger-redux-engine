@@ -746,9 +746,7 @@ void GAME_EXPORT Key_Event( int key, int down )
 			Key_Message( key );
 			return;
 		case key_console:
-			if( cls.state == ca_active && !cl.background )
-				Key_SetKeyDest( key_game );
-			else UI_SetActiveMenu( true );
+			Con_ToggleConsole_f();
 			return;
 		case key_menu:
 			UI_KeyEvent( key, true );

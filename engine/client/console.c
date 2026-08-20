@@ -151,6 +151,7 @@ static qboolean con_source_output_selection;
 static qboolean con_source_output_dragging;
 static qboolean con_source_input_dragging;
 static qboolean con_source_selection_is_output;
+static qboolean con_restore_menu_on_close;
 #if XASH_RAYTRACING
 static qboolean		con_source_blur_active;
 #endif
@@ -401,8 +402,8 @@ void Con_ToggleConsole_f( void )
 
 	SCR_EndLoadingPlaque();
 
-	// show console only in game or by special call from menu
-	if( cls.state != ca_active || cls.key_dest == key_menu )
+	// The hardcoded console key is also available from the title and pause menus.
+	if( cls.state != ca_active && cls.key_dest != key_menu && cls.key_dest != key_console )
 		return;
 
 	Con_ClearTyping();
@@ -412,13 +413,17 @@ void Con_ToggleConsole_f( void )
 
 	if( cls.key_dest == key_console )
 	{
-		if( Cvar_VariableInteger( "sv_background" ) || Cvar_VariableInteger( "cl_background" ))
+		if( con_restore_menu_on_close || Cvar_VariableInteger( "sv_background" ) ||
+			Cvar_VariableInteger( "cl_background" ))
 			UI_SetActiveMenu( true );
 		else UI_SetActiveMenu( false );
+		con_restore_menu_on_close = false;
 	}
 	else
 	{
-		UI_SetActiveMenu( false );
+		con_restore_menu_on_close = cls.key_dest == key_menu;
+		if( !con_restore_menu_on_close )
+			UI_SetActiveMenu( false );
 		Key_SetKeyDest( key_console );
 	}
 }
@@ -1267,6 +1272,9 @@ void Con_Init( void )
 	con_fontscale = Cvar_Get( "con_fontscale", "1.0", FCVAR_ARCHIVE, "scale font texture" );
 	con_fontnum = Cvar_Get( "con_fontnum", "-1", FCVAR_ARCHIVE, "console font number (0, 1 or 2), -1 for autoselect" );
 	con_color = Cvar_Get( "con_color", "240 180 24", FCVAR_ARCHIVE, "set a custom console color" );
+#if XASH_RAYTRACING
+	Cvar_Get( "_rt_console_active", "0", 0, "internal Source console visibility" );
+#endif
 
 	// init the console buffer
 	con.bufsize = CON_TEXTSIZE;
@@ -2995,6 +3003,7 @@ void Con_RunConsole( void )
 	con.showlines = sourceVisible ? refState.height : 0;
 	con.vislines = con.showlines;
 #if XASH_RAYTRACING
+	Cvar_SetValue( "_rt_console_active", sourceVisible ? 1.0f : 0.0f );
 	if( sourceVisible )
 	{
 		Cvar_SetValue( "_rt_menu_blur", 1.0f );
@@ -3196,6 +3205,7 @@ void Con_FastClose( void )
 	con.showlines = 0;
 	con.vislines = 0;
 #if XASH_RAYTRACING
+	Cvar_SetValue( "_rt_console_active", 0.0f );
 	if( con_source_blur_active )
 	{
 		Cvar_SetValue( "_rt_menu_blur", 0.0f );
