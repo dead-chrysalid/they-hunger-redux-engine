@@ -872,9 +872,21 @@ pfnCvar_RegisterVariable
 */
 cvar_t *pfnCvar_RegisterClientVariable( const char *szName, const char *szValue, int flags )
 {
+	convar_t *existing;
+
 	// a1ba: try to mitigate outdated client.dll vulnerabilities
 	if( !Q_stricmp( szName, "motdfile" ))
 		flags |= FCVAR_PRIVILEGED;
+
+	// Engine-owned cvars remain valid while the client DLL is absent. Reuse
+	// them without resetting their archived value or claiming them for client
+	// DLL teardown.
+	existing = Cvar_FindVar( szName );
+	if( existing && !FBitSet( existing->flags, FCVAR_CLIENTDLL ))
+	{
+		SetBits( existing->flags, flags );
+		return (cvar_t *)existing;
+	}
 
 	if( FBitSet( flags, FCVAR_GLCONFIG ))
 		return (cvar_t *)Cvar_Get( szName, szValue, flags, va( CVAR_GLCONFIG_DESCRIPTION, szName ));

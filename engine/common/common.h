@@ -246,6 +246,8 @@ typedef struct
 	int		cursor;
 	int		scroll;
 	int		widthInChars;
+	int		selectionAnchor;
+	int		selectionEnd;
 } field_t;
 
 typedef struct host_redirect_s

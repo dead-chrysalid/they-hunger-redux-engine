@@ -486,6 +486,13 @@ static const RgEditorCvarDescriptor rt_editor_base_cvars[] =
 	CVAR_FLOAT( "sv_stamina_sprint_min_speed", "Sprint drain minimum speed", "Gameplay / Stamina", 120.0f, 0.0f, 1000.0f, 5.0f, "%.0f u/s" ),
 	CVAR_FLOAT( "sv_stamina_sprint_resume_fraction", "Exhausted sprint recovery fraction", "Gameplay / Stamina", 0.03f, 0.0f, 1.0f, 0.01f, "%.2f" ),
 
+	CVAR_FLOAT( "rt_flsh", "Intensity", "Lighting / Flashlight", 800.0f, 0.0f, 5000.0f, 10.0f, "%.0f" ),
+	CVAR_FLOAT( "rt_flsh_radius", "Emitter radius", "Lighting / Flashlight", 0.02f, 0.0f, 0.50f, 0.005f, "%.3f m" ),
+	CVAR_FLOAT( "rt_flsh_angle", "Outer cone", "Lighting / Flashlight", 20.0f, 1.0f, 89.0f, 0.25f, "%.2f deg" ),
+	CVAR_FLOAT( "rt_flsh_angle_inner", "Inner cone", "Lighting / Flashlight", 0.0f, 0.0f, 89.0f, 0.25f, "%.2f deg" ),
+	CVAR_FLOAT( "rt_flsh_r", "Right offset", "Lighting / Flashlight", -0.2f, -2.0f, 2.0f, 0.01f, "%.2f m" ),
+	CVAR_FLOAT( "rt_flsh_u", "Up offset", "Lighting / Flashlight", -0.3f, -2.0f, 2.0f, 0.01f, "%.2f m" ),
+
 	CVAR_BOOL( "sv_interact_enabled", "Enabled", "Gameplay / Interaction", 1.0f ),
 	CVAR_BOOL( "sv_interact_pickups_require_use", "Pickups require interact", "Gameplay / Interaction", 1.0f ),
 	CVAR_FLOAT( "sv_interact_outline_full_opacity_radius", "Item full-opacity distance", "Gameplay / Interaction", 200.0f, 0.0f, 2048.0f, 4.0f, "%.0f u" ),

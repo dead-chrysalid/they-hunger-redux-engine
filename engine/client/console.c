@@ -21,6 +21,7 @@ GNU General Public License for more details.
 #include "qfont.h"
 #include "wadfile.h"
 #include "input.h"
+#include "hud_text.h"
 
 convar_t	*con_notifytime;
 convar_t	*scr_conspeed;
@@ -138,6 +139,120 @@ typedef struct
 
 static console_t		con;
 
+typedef struct
+{
+	int line;
+	int character;
+} con_text_position_t;
+
+static con_text_position_t con_source_selection_anchor;
+static con_text_position_t con_source_selection_end;
+static qboolean con_source_output_selection;
+static qboolean con_source_output_dragging;
+static qboolean con_source_input_dragging;
+static qboolean con_source_selection_is_output;
+static qboolean con_restore_menu_on_close;
+#if XASH_RAYTRACING
+static qboolean		con_source_blur_active;
+#endif
+
+typedef struct
+{
+	float scale;
+	int x, y, width, height;
+	int border, padding, titleHeight;
+	int textX, textY, textWidth, textHeight;
+	int scrollbarX, scrollbarY, scrollbarWidth, scrollbarHeight;
+	int inputX, inputY, inputWidth, inputHeight;
+	int footerY, footerHeight;
+	int closeX, closeY, closeSize;
+} con_source_layout_t;
+
+static void Con_SourceLayout( con_source_layout_t *layout )
+{
+	int margin;
+	int maximumWidth;
+	int maximumHeight;
+	int fontHeight = con.curFont ? con.curFont->charHeight : 12;
+
+	memset( layout, 0, sizeof( *layout ));
+	layout->scale = (float)refState.height / 1080.0f;
+	layout->scale = Q_max( 0.70f, Q_min( 1.45f, layout->scale ));
+	margin = Q_max( 20, (int)( 34.0f * layout->scale ));
+	maximumWidth = (int)( 1560.0f * layout->scale );
+	maximumHeight = (int)( 850.0f * layout->scale );
+
+	layout->width = Q_max( 320, Q_min( refState.width - margin * 2, maximumWidth ));
+	layout->height = Q_max( 260, Q_min( refState.height - margin * 2, maximumHeight ));
+	layout->x = ( refState.width - layout->width ) / 2;
+	layout->y = ( refState.height - layout->height ) / 2;
+	layout->border = Q_max( 1, (int)( 2.0f * layout->scale ));
+	layout->padding = Q_max( 10, (int)( 18.0f * layout->scale ));
+	layout->titleHeight = Q_max( 40, (int)( 52.0f * layout->scale ));
+	layout->inputHeight = Q_max( fontHeight + 16, (int)( 44.0f * layout->scale ));
+	layout->footerHeight = Q_max( fontHeight + 8, (int)( 26.0f * layout->scale ));
+
+	layout->closeSize = Q_max( 26, layout->titleHeight - Q_max( 10, (int)( 14.0f * layout->scale )) );
+	layout->closeX = layout->x + layout->width - layout->padding - layout->closeSize;
+	layout->closeY = layout->y + ( layout->titleHeight - layout->closeSize ) / 2;
+
+	layout->inputX = layout->x + layout->padding;
+	layout->inputY = layout->y + layout->height - layout->padding - layout->footerHeight - layout->inputHeight;
+	layout->inputWidth = layout->width - layout->padding * 2;
+	layout->footerY = layout->inputY + layout->inputHeight;
+	layout->footerHeight = layout->y + layout->height - layout->padding - layout->footerY;
+
+	layout->scrollbarWidth = Q_max( 5, (int)( 7.0f * layout->scale ));
+	layout->textX = layout->x + layout->padding;
+	layout->textY = layout->y + layout->titleHeight + layout->padding;
+	layout->scrollbarX = layout->x + layout->width - layout->padding - layout->scrollbarWidth;
+	layout->textWidth = layout->scrollbarX - Q_max( 8, (int)( 12.0f * layout->scale )) - layout->textX;
+	layout->textHeight = Q_max( fontHeight, layout->inputY - layout->padding - layout->textY );
+	layout->scrollbarY = layout->textY;
+	layout->scrollbarHeight = layout->textHeight;
+}
+
+static qboolean Con_SourcePointInClose( const con_source_layout_t *layout, int x, int y )
+{
+	return x >= layout->closeX && x < layout->closeX + layout->closeSize &&
+		y >= layout->closeY && y < layout->closeY + layout->closeSize;
+}
+
+static qboolean Con_SourcePointInRect( int x, int y, int left, int top, int width, int height )
+{
+	return x >= left && x < left + width && y >= top && y < top + height;
+}
+
+static int Con_SourceInputTextX( const con_source_layout_t *layout )
+{
+	int inputPadding = Q_max( 8, (int)( 12.0f * layout->scale ));
+	return layout->inputX + inputPadding + con.curFont->charWidths['>'] + con.curFont->charWidths[' '];
+}
+
+static int Con_SourceFieldCursorAtX( const con_source_layout_t *layout, const field_t *field, int mouseX )
+{
+	int cursor = bound( 0, field->scroll, Q_strlen( field->buffer ));
+	int x = Con_SourceInputTextX( layout );
+	while( field->buffer[cursor] )
+	{
+		int next = Con_UtfMoveRight( field->buffer, cursor, field->widthInChars );
+		int width = 0;
+		char character[8];
+		int bytes = Q_min( next - cursor, (int)sizeof( character ) - 1 );
+		memcpy( character, field->buffer + cursor, bytes );
+		character[bytes] = '\0';
+		Con_DrawStringLen( character, &width, NULL );
+		if( mouseX < x + width / 2 ) break;
+		x += width;
+		cursor = next;
+	}
+	return cursor;
+}
+
+static qboolean Con_SourceOutputPositionAtPoint( const con_source_layout_t *layout,
+	int mouseX, int mouseY, con_text_position_t *position );
+static void Con_SourceCopyOutputSelection( void );
+
 void Con_ClearField( field_t *edit );
 void Field_CharEvent( field_t *edit, int ch );
 
@@ -153,6 +268,8 @@ void Con_Clear_f( void )
 {
 	con.lines_count = 0;
 	con.backscroll = 0; // go to end
+	con_source_output_selection = false;
+	con_source_output_dragging = false;
 }
 
 /*
@@ -285,22 +402,28 @@ void Con_ToggleConsole_f( void )
 
 	SCR_EndLoadingPlaque();
 
-	// show console only in game or by special call from menu
-	if( cls.state != ca_active || cls.key_dest == key_menu )
+	// The hardcoded console key is also available from the title and pause menus.
+	if( cls.state != ca_active && cls.key_dest != key_menu && cls.key_dest != key_console )
 		return;
 
 	Con_ClearTyping();
 	Con_ClearNotify();
+	con_source_output_dragging = false;
+	con_source_input_dragging = false;
 
 	if( cls.key_dest == key_console )
 	{
-		if( Cvar_VariableInteger( "sv_background" ) || Cvar_VariableInteger( "cl_background" ))
+		if( con_restore_menu_on_close || Cvar_VariableInteger( "sv_background" ) ||
+			Cvar_VariableInteger( "cl_background" ))
 			UI_SetActiveMenu( true );
 		else UI_SetActiveMenu( false );
+		con_restore_menu_on_close = false;
 	}
 	else
 	{
-		UI_SetActiveMenu( false );
+		con_restore_menu_on_close = cls.key_dest == key_menu;
+		if( !con_restore_menu_on_close )
+			UI_SetActiveMenu( false );
 		Key_SetKeyDest( key_console );
 	}
 }
@@ -478,12 +601,17 @@ void Con_CheckResize( void )
 {
 	int	charWidth = 8;
 	int	i, width;
+	con_source_layout_t layout;
 
 	if( con.curFont && con.curFont->hFontTexture )
-		charWidth = con.curFont->charWidths['O'] - 1;
+		charWidth = Q_max( 1, con.curFont->charWidths['O'] - 1 );
 
-	width = ( refState.width / charWidth ) - 2;
-	if( !ref.initialized ) width = (640 / 5);
+	if( ref.initialized )
+	{
+		Con_SourceLayout( &layout );
+		width = Q_max( 16, ( layout.textWidth / charWidth ) - 1 );
+	}
+	else width = (640 / 5);
 
 	if( width == con.linewidth )
 		return;
@@ -493,6 +621,7 @@ void Con_CheckResize( void )
 	con.backscroll = 0;
 
 	con.input.widthInChars = con.linewidth;
+	con.chat.widthInChars = con.linewidth;
 
 	for( i = 0; i < CON_HISTORY; i++ )
 		con.history.lines[i].widthInChars = con.linewidth;
@@ -1143,6 +1272,9 @@ void Con_Init( void )
 	con_fontscale = Cvar_Get( "con_fontscale", "1.0", FCVAR_ARCHIVE, "scale font texture" );
 	con_fontnum = Cvar_Get( "con_fontnum", "-1", FCVAR_ARCHIVE, "console font number (0, 1 or 2), -1 for autoselect" );
 	con_color = Cvar_Get( "con_color", "240 180 24", FCVAR_ARCHIVE, "set a custom console color" );
+#if XASH_RAYTRACING
+	Cvar_Get( "_rt_console_active", "0", 0, "internal Source console visibility" );
+#endif
 
 	// init the console buffer
 	con.bufsize = CON_TEXTSIZE;
@@ -1425,6 +1557,8 @@ void Con_ClearField( field_t *edit )
 	memset( edit->buffer, 0, MAX_STRING );
 	edit->cursor = 0;
 	edit->scroll = 0;
+	edit->selectionAnchor = 0;
+	edit->selectionEnd = 0;
 }
 
 /*
@@ -1436,6 +1570,51 @@ static void Field_Set( field_t *f, const char *string )
 {
 	f->scroll = 0;
 	f->cursor = Q_strncpy( f->buffer, string, MAX_STRING );
+	f->selectionAnchor = f->cursor;
+	f->selectionEnd = f->cursor;
+}
+
+static qboolean Field_HasSelection( const field_t *edit )
+{
+	return edit->selectionAnchor != edit->selectionEnd;
+}
+
+static void Field_ClearSelection( field_t *edit )
+{
+	edit->selectionAnchor = edit->cursor;
+	edit->selectionEnd = edit->cursor;
+}
+
+static void Field_SelectionBounds( const field_t *edit, int *start, int *end )
+{
+	*start = Q_min( edit->selectionAnchor, edit->selectionEnd );
+	*end = Q_max( edit->selectionAnchor, edit->selectionEnd );
+}
+
+static qboolean Field_DeleteSelection( field_t *edit )
+{
+	int start, end;
+	int len;
+	if( !Field_HasSelection( edit )) return false;
+	Field_SelectionBounds( edit, &start, &end );
+	len = Q_strlen( edit->buffer );
+	memmove( edit->buffer + start, edit->buffer + end, len - end + 1 );
+	edit->cursor = start;
+	Field_ClearSelection( edit );
+	edit->scroll = Q_min( edit->scroll, edit->cursor );
+	return true;
+}
+
+static void Field_CopySelection( const field_t *edit )
+{
+	int start, end;
+	char selected[MAX_STRING];
+	if( !Field_HasSelection( edit )) return;
+	Field_SelectionBounds( edit, &start, &end );
+	end = Q_min( end, start + (int)sizeof( selected ) - 1 );
+	memcpy( selected, edit->buffer + start, end - start );
+	selected[end - start] = '\0';
+	Platform_SetClipboardText( selected );
 }
 
 /*
@@ -1451,6 +1630,7 @@ void Field_Paste( field_t *edit )
 	cbd = Sys_GetClipboardData();
 	if( !cbd ) return;
 
+	Field_DeleteSelection( edit );
 	// send as if typed, so insert / overstrike works properly
 	pasteLen = Q_strlen( cbd );
 	for( i = 0; i < pasteLen; i++ )
@@ -1467,6 +1647,20 @@ static void Field_GoTo( field_t *edit, int pos )
 {
 	edit->cursor = pos;
 	edit->scroll = Q_max( 0, edit->cursor - edit->widthInChars );
+}
+
+static void Field_MoveSelection( field_t *edit, int oldCursor, qboolean extend )
+{
+	if( extend )
+	{
+		if( !Field_HasSelection( edit ))
+			edit->selectionAnchor = oldCursor;
+		edit->selectionEnd = edit->cursor;
+	}
+	else
+	{
+		Field_ClearSelection( edit );
+	}
 }
 
 /*
@@ -1494,6 +1688,7 @@ void Field_KeyDownEvent( field_t *edit, int key )
 
 	if( key == K_DEL )
 	{
+		if( Field_DeleteSelection( edit )) return;
 		if( edit->cursor < len )
 			memmove( edit->buffer + edit->cursor, edit->buffer + edit->cursor + 1, len - edit->cursor );
 		return;
@@ -1501,6 +1696,7 @@ void Field_KeyDownEvent( field_t *edit, int key )
 
 	if( key == K_BACKSPACE )
 	{
+		if( Field_DeleteSelection( edit )) return;
 		if( edit->cursor > 0 )
 		{
 			int newcursor = Con_UtfMoveLeft( edit->buffer, edit->cursor );
@@ -1513,28 +1709,60 @@ void Field_KeyDownEvent( field_t *edit, int key )
 
 	if( key == K_RIGHTARROW )
 	{
+		int oldCursor = edit->cursor;
+		if( Field_HasSelection( edit ) && !Key_IsDown( K_SHIFT ))
+		{
+			int start, end;
+			Field_SelectionBounds( edit, &start, &end );
+			Field_GoTo( edit, end );
+			Field_ClearSelection( edit );
+			return;
+		}
 		if( edit->cursor < len ) edit->cursor = Con_UtfMoveRight( edit->buffer, edit->cursor, edit->widthInChars );
 		if( edit->cursor >= edit->scroll + edit->widthInChars && edit->cursor <= len )
 			edit->scroll++;
+		Field_MoveSelection( edit, oldCursor, Key_IsDown( K_SHIFT ));
 		return;
 	}
 
 	if( key == K_LEFTARROW )
 	{
+		int oldCursor = edit->cursor;
+		if( Field_HasSelection( edit ) && !Key_IsDown( K_SHIFT ))
+		{
+			int start, end;
+			Field_SelectionBounds( edit, &start, &end );
+			Field_GoTo( edit, start );
+			Field_ClearSelection( edit );
+			return;
+		}
 		if( edit->cursor > 0 ) edit->cursor = Con_UtfMoveLeft( edit->buffer, edit->cursor );
 		if( edit->cursor < edit->scroll ) edit->scroll--;
+		Field_MoveSelection( edit, oldCursor, Key_IsDown( K_SHIFT ));
 		return;
 	}
 
-	if( key == K_HOME || ( Q_tolower(key) == 'a' && Key_IsDown( K_CTRL )))
+	if( Q_tolower(key) == 'a' && Key_IsDown( K_CTRL ))
 	{
+		edit->selectionAnchor = 0;
+		edit->selectionEnd = len;
+		Field_GoTo( edit, len );
+		return;
+	}
+
+	if( key == K_HOME )
+	{
+		int oldCursor = edit->cursor;
 		Field_GoTo( edit, 0 );
+		Field_MoveSelection( edit, oldCursor, Key_IsDown( K_SHIFT ));
 		return;
 	}
 
 	if( key == K_END || ( Q_tolower(key) == 'e' && Key_IsDown( K_CTRL )))
 	{
+		int oldCursor = edit->cursor;
 		Field_GoTo( edit, len );
+		Field_MoveSelection( edit, oldCursor, Key_IsDown( K_SHIFT ));
 		return;
 	}
 
@@ -1563,8 +1791,7 @@ void Field_CharEvent( field_t *edit, int ch )
 
 	if( ch == 'c' - 'a' + 1 )
 	{
-		// ctrl-c clears the field
-		Con_ClearField( edit );
+		Field_CopySelection( edit );
 		return;
 	}
 
@@ -1572,8 +1799,9 @@ void Field_CharEvent( field_t *edit, int ch )
 
 	if( ch == 'a' - 'a' + 1 )
 	{
-		// ctrl-a is home
-		Field_GoTo( edit, 0 );
+		edit->selectionAnchor = 0;
+		edit->selectionEnd = len;
+		Field_GoTo( edit, len );
 		return;
 	}
 
@@ -1586,6 +1814,9 @@ void Field_CharEvent( field_t *edit, int ch )
 
 	// ignore any other non printable chars
 	if( ch < 32 ) return;
+
+	Field_DeleteSelection( edit );
+	len = Q_strlen( edit->buffer );
 
 	if( host.key_overstrike )
 	{
@@ -1604,6 +1835,7 @@ void Field_CharEvent( field_t *edit, int ch )
 
 	if( edit->cursor >= edit->widthInChars ) edit->scroll++;
 	if( edit->cursor == len + 1 ) edit->buffer[edit->cursor] = 0;
+	Field_ClearSelection( edit );
 }
 
 /*
@@ -1647,6 +1879,30 @@ void Field_DrawInputLine( int x, int y, field_t *edit )
 
 	memcpy( str, edit->buffer + prestep, drawLen );
 	str[drawLen] = 0;
+
+	if( Field_HasSelection( edit ))
+	{
+		int selectionStart, selectionEnd;
+		int visibleStart, visibleEnd;
+		int prefixWidth = 0, selectionWidth = 0;
+		char savedStart, savedEnd;
+		Field_SelectionBounds( edit, &selectionStart, &selectionEnd );
+		visibleStart = bound( prestep, selectionStart, prestep + drawLen ) - prestep;
+		visibleEnd = bound( prestep, selectionEnd, prestep + drawLen ) - prestep;
+		if( visibleEnd > visibleStart )
+		{
+			savedStart = str[visibleStart];
+			str[visibleStart] = '\0';
+			Con_DrawStringLen( str, &prefixWidth, NULL );
+			str[visibleStart] = savedStart;
+			savedEnd = str[visibleEnd];
+			str[visibleEnd] = '\0';
+			Con_DrawStringLen( str + visibleStart, &selectionWidth, NULL );
+			str[visibleEnd] = savedEnd;
+			ref.dllFuncs.FillRGBABlend( x + prefixWidth, y, selectionWidth,
+				con.curFont->charHeight, 255, 255, 255, 54 );
+		}
+	}
 
 	// save char for overstrike
 	cursorChar = str[edit->cursor - prestep];
@@ -1705,6 +1961,7 @@ static void Con_HistoryUp( con_history_t *self, field_t *in )
 		self->line = Q_max( 0, self->line - 1 );
 
 	*in = self->lines[self->line % CON_HISTORY];
+	Field_ClearSelection( in );
 }
 
 /*
@@ -1719,6 +1976,7 @@ static void Con_HistoryDown( con_history_t *self, field_t *in )
 	if( self->line == self->next )
 		*in = self->backup;
 	else *in = self->lines[self->line % CON_HISTORY];
+	Field_ClearSelection( in );
 }
 
 /*
@@ -1821,6 +2079,58 @@ Handles history and console scrollback
 */
 void Key_Console( int key )
 {
+	if( key == K_MOUSE1 )
+	{
+		con_source_layout_t layout;
+		int mouseX, mouseY;
+
+		Con_SourceLayout( &layout );
+		Platform_GetMousePos( &mouseX, &mouseY );
+		if( Con_SourcePointInClose( &layout, mouseX, mouseY ))
+		{
+			Con_ToggleConsole_f();
+			return;
+		}
+
+		if( Con_SourcePointInRect( mouseX, mouseY, layout.inputX, layout.inputY,
+			layout.inputWidth, layout.inputHeight ))
+		{
+			con.input.cursor = Con_SourceFieldCursorAtX( &layout, &con.input, mouseX );
+			con.input.selectionAnchor = con.input.cursor;
+			con.input.selectionEnd = con.input.cursor;
+			con_source_input_dragging = true;
+			con_source_output_dragging = false;
+			con_source_output_selection = false;
+			con_source_selection_is_output = false;
+			return;
+		}
+
+		if( Con_SourcePointInRect( mouseX, mouseY, layout.textX, layout.textY,
+			layout.textWidth, layout.textHeight ) &&
+			Con_SourceOutputPositionAtPoint( &layout, mouseX, mouseY, &con_source_selection_anchor ))
+		{
+			con_source_selection_end = con_source_selection_anchor;
+			con_source_output_selection = false;
+			con_source_output_dragging = true;
+			con_source_input_dragging = false;
+			con_source_selection_is_output = true;
+			Field_ClearSelection( &con.input );
+			return;
+		}
+
+		con_source_output_selection = false;
+		con_source_output_dragging = false;
+		con_source_input_dragging = false;
+		Field_ClearSelection( &con.input );
+	}
+
+	if( Q_tolower( key ) == 'c' && Key_IsDown( K_CTRL ) &&
+		con_source_selection_is_output && con_source_output_selection )
+	{
+		Con_SourceCopyOutputSelection();
+		return;
+	}
+
 	// ctrl-L clears screen
 	if( key == 'l' && Key_IsDown( K_CTRL ))
 	{
@@ -1967,6 +2277,99 @@ DRAWING
 
 ==============================================================================
 */
+static void Con_SourceFill( int x, int y, int width, int height, int r, int g, int b, int a )
+{
+	if( width <= 0 || height <= 0 || a <= 0 )
+		return;
+	ref.dllFuncs.FillRGBABlend( x, y, width, height, r, g, b, a );
+}
+
+static void Con_SourceBorder( int x, int y, int width, int height, int thickness, int alpha )
+{
+	Con_SourceFill( x, y, width, thickness, 255, 255, 255, alpha );
+	Con_SourceFill( x, y + height - thickness, width, thickness, 255, 255, 255, alpha );
+	Con_SourceFill( x, y + thickness, thickness, height - thickness * 2, 255, 255, 255, alpha );
+	Con_SourceFill( x + width - thickness, y + thickness, thickness, height - thickness * 2, 255, 255, 255, alpha );
+}
+
+static int Con_SourceHudTextWidth( hud_text_style_t style, const char *text )
+{
+	int width = 0;
+	const char *cursor;
+
+	if( !text )
+		return 0;
+	if( !CL_HudTextStyleReady( style ))
+	{
+		Con_DrawStringLen( text, &width, NULL );
+		return width;
+	}
+
+	for( cursor = text; *cursor; ++cursor )
+		width += CL_HudTextGetCharWidth( style, (unsigned char)*cursor );
+	return width;
+}
+
+static int Con_SourceDrawHudText( hud_text_style_t style, int x, int y, const char *text,
+	int r, int g, int b, int a )
+{
+	int start = x;
+	const char *cursor;
+	rgba_t fallback;
+
+	if( !text )
+		return 0;
+	if( !CL_HudTextStyleReady( style ))
+	{
+		MakeRGBA( fallback, r, g, b, a );
+		return Con_DrawString( x, y, text, fallback );
+	}
+
+	for( cursor = text; *cursor; ++cursor )
+		x += CL_HudTextDrawCharacter( style, x, y, (unsigned char)*cursor, r, g, b, a );
+	return x - start;
+}
+
+static int Con_SourceDrawConsoleString( int x, int y, int maximumWidth, const char *text, int alpha )
+{
+	rgba_t color;
+	rgba_t baseColor;
+	int width = 0;
+	const char *cursor;
+
+	MakeRGBA( baseColor, 232, 232, 228, alpha );
+	memcpy( color, baseColor, sizeof( color ));
+	Con_UtfProcessChar( 0 );
+
+	for( cursor = text; cursor && *cursor; )
+	{
+		int charWidth;
+
+		if( IsColorString( cursor ))
+		{
+			int colorIndex = ColorIndex( *( cursor + 1 ));
+			if( colorIndex == ColorIndex( COLOR_DEFAULT ))
+				memcpy( color, baseColor, sizeof( color ));
+			else
+			{
+				memcpy( color, g_color_table[colorIndex], sizeof( color ));
+				color[3] = alpha;
+			}
+			cursor += 2;
+			continue;
+		}
+
+		charWidth = con.curFont->charWidths[(unsigned char)*cursor];
+		if( maximumWidth > 0 && width + charWidth > maximumWidth )
+			break;
+		width += Con_DrawCharacter( x + width, y, (unsigned char)*cursor, color );
+		++cursor;
+	}
+
+	ref.dllFuncs.Color4ub( 255, 255, 255, 255 );
+	return width;
+}
+
 /*
 ================
 Con_DrawInput
@@ -1974,17 +2377,26 @@ Con_DrawInput
 The input line scrolls horizontally if typing goes beyond the right edge
 ================
 */
-void Con_DrawInput( int lines )
+static void Con_DrawInput( const con_source_layout_t *layout )
 {
-	int	y;
+	int y;
+	int promptWidth;
+	int inputPadding;
+	rgba_t savedDefault;
 
 	// don't draw anything (always draw if not active)
 	if( cls.key_dest != key_console || !con.curFont )
 		return;
 
-	y = lines - ( con.curFont->charHeight * 2 );
-	Con_DrawCharacter( con.curFont->charWidths[' '], y, ']', g_color_table[7] );
-	Field_DrawInputLine(  con.curFont->charWidths[' ']*2, y, &con.input );
+	inputPadding = Q_max( 8, (int)( 12.0f * layout->scale ));
+	y = layout->inputY + ( layout->inputHeight - con.curFont->charHeight ) / 2;
+	promptWidth = Con_SourceDrawConsoleString( layout->inputX + inputPadding, y,
+		layout->inputWidth - inputPadding * 2, ">", 255 );
+
+	memcpy( savedDefault, g_color_table[ColorIndex( COLOR_DEFAULT )], sizeof( savedDefault ));
+	MakeRGBA( g_color_table[ColorIndex( COLOR_DEFAULT )], 232, 232, 228, 255 );
+	Field_DrawInputLine( layout->inputX + inputPadding + promptWidth + con.curFont->charWidths[' '], y, &con.input );
+	memcpy( g_color_table[ColorIndex( COLOR_DEFAULT )], savedDefault, sizeof( savedDefault ));
 }
 
 /*
@@ -2120,15 +2532,54 @@ If alpha is 0, the line is not drawn, but still wrapped and its height
 returned.
 ================
 */
-int Con_DrawConsoleLine( int y, int lineno )
+static int Con_DrawConsoleLine( int x, int y, int maximumWidth, int lineno )
 {
 	con_lineinfo_t	*li = &CON_LINES( lineno );
+	con_text_position_t start, end;
+	int selectionStart, selectionEnd;
+	int prefixWidth = 0, selectionWidth = 0;
+	const char *cursor;
+	int rawIndex;
 
 	if( !li || !li->start || *li->start == '\1' )
 		return 0;	// this string will be shown only at notify
 
+	start = con_source_selection_anchor;
+	end = con_source_selection_end;
+	if( start.line > end.line || ( start.line == end.line && start.character > end.character ))
+	{
+		con_text_position_t swap = start;
+		start = end;
+		end = swap;
+	}
+	if( con_source_output_selection && lineno >= start.line && lineno <= end.line )
+	{
+		selectionStart = lineno == start.line ? start.character : 0;
+		selectionEnd = lineno == end.line ? end.character : Q_strlen( li->start );
+		selectionStart = bound( 0, selectionStart, Q_strlen( li->start ));
+		selectionEnd = bound( selectionStart, selectionEnd, Q_strlen( li->start ));
+		for( cursor = li->start, rawIndex = 0; *cursor && rawIndex < selectionEnd; )
+		{
+			if( IsColorString( cursor ))
+			{
+				cursor += 2;
+				rawIndex += 2;
+				continue;
+			}
+			if( rawIndex < selectionStart )
+				prefixWidth += con.curFont->charWidths[(unsigned char)*cursor];
+			else
+				selectionWidth += con.curFont->charWidths[(unsigned char)*cursor];
+			cursor++;
+			rawIndex++;
+		}
+		if( prefixWidth < maximumWidth && selectionWidth > 0 )
+			Con_SourceFill( x + prefixWidth, y, Q_min( selectionWidth, maximumWidth - prefixWidth ),
+				con.curFont->charHeight, 255, 255, 255, 54 );
+	}
+
 	if( y >= con.curFont->charHeight )
-		Con_DrawGenericString( con.curFont->charWidths[' '], y, li->start, g_color_table[7], false, -1 );
+		Con_SourceDrawConsoleString( x, y, maximumWidth, li->start, 255 );
 
 	return con.curFont->charHeight;
 }
@@ -2164,6 +2615,99 @@ static void Con_LastVisibleLine( int *lastline )
 	con.backscroll = lines_seen - 1;
 }
 
+static qboolean Con_SourceOutputPositionAtPoint( const con_source_layout_t *layout,
+	int mouseX, int mouseY, con_text_position_t *position )
+{
+	int line;
+	int y;
+	int textLeft;
+	int textRight;
+	int relativeX;
+	int rawIndex;
+	const char *cursor;
+	con_lineinfo_t *li;
+
+	if( !position || CON_LINES_COUNT <= 0 ) return false;
+	Con_LastVisibleLine( &line );
+	y = layout->textY + layout->textHeight - layout->border - con.curFont->charHeight -
+		Q_max( 5, (int)( 8.0f * layout->scale ));
+	textLeft = layout->textX + Q_max( 8, (int)( 12.0f * layout->scale ));
+	textRight = textLeft + layout->textWidth - Q_max( 16, (int)( 24.0f * layout->scale ));
+
+	for( ; line >= 0 && y >= layout->textY + layout->border; --line )
+	{
+		li = &CON_LINES( line );
+		if( !li || !li->start || *li->start == '\1' ) continue;
+		if( mouseY >= y && mouseY < y + con.curFont->charHeight )
+		{
+			relativeX = bound( textLeft, mouseX, textRight ) - textLeft;
+			cursor = li->start;
+			rawIndex = 0;
+			while( *cursor )
+			{
+				int width;
+				if( IsColorString( cursor ))
+				{
+					cursor += 2;
+					rawIndex += 2;
+					continue;
+				}
+				width = con.curFont->charWidths[(unsigned char)*cursor];
+				if( relativeX < width / 2 ) break;
+				relativeX -= width;
+				cursor++;
+				rawIndex++;
+			}
+			position->line = line;
+			position->character = rawIndex;
+			return true;
+		}
+		y -= con.curFont->charHeight;
+	}
+	return false;
+}
+
+static void Con_SourceCopyOutputSelection( void )
+{
+	con_text_position_t start = con_source_selection_anchor;
+	con_text_position_t end = con_source_selection_end;
+	char *copy;
+	int out = 0;
+	int line;
+
+	if( !con_source_output_selection ) return;
+	if( start.line > end.line || ( start.line == end.line && start.character > end.character ))
+	{
+		con_text_position_t swap = start;
+		start = end;
+		end = swap;
+	}
+	copy = Z_Malloc( CON_TEXTSIZE + 1 );
+	for( line = start.line; line <= end.line && out < CON_TEXTSIZE; ++line )
+	{
+		con_lineinfo_t *li = &CON_LINES( line );
+		int from, to, i;
+		if( !li || !li->start || *li->start == '\1' ) continue;
+		from = line == start.line ? start.character : 0;
+		to = line == end.line ? end.character : Q_strlen( li->start );
+		from = bound( 0, from, Q_strlen( li->start ));
+		to = bound( from, to, Q_strlen( li->start ));
+		for( i = from; i < to && out < CON_TEXTSIZE; ++i )
+		{
+			if( IsColorString( li->start + i ))
+			{
+				i++;
+				continue;
+			}
+			copy[out++] = li->start[i];
+		}
+		if( line < end.line && out < CON_TEXTSIZE ) copy[out++] = '\n';
+	}
+	copy[out] = '\0';
+	Platform_SetClipboardText( copy );
+	Mem_Free( copy );
+}
+
 /*
 ================
 Con_DrawConsole
@@ -2173,78 +2717,160 @@ Draws the console with the solid background
 */
 void Con_DrawSolidConsole( int lines )
 {
-	int	i, x, y;
-	float	fraction;
-	int	start;
-	int	stringLen, width = 0, charH;
+	con_source_layout_t layout;
+	int x, y;
+	int lastline;
+	int mouseX = -1, mouseY = -1;
+	int titleY;
+	int titleHeight;
+	int titleWidth;
+	int closeTextWidth;
+	int closeTextHeight;
+	int visibleLines;
+	int totalLines;
+	int scrollRange;
+	int thumbHeight;
+	int thumbTravel;
+	int thumbY;
+	int footerY;
+	int buildWidth;
+	int buildMaximumWidth;
+	qboolean closeHovered;
 	string	curbuild;
-	byte	color[4];
+	string footer;
 
-	if( lines <= 0 ) return;
+	if( lines <= 0 || !con.curFont || !host.allow_console )
+		return;
 
-	// draw the background
-	ref.dllFuncs.GL_SetRenderMode( kRenderNormal );
-	ref.dllFuncs.Color4ub( 255, 255, 255, 255 ); // to prevent grab color from screenfade
-	if( refState.width * 3 / 4 < refState.height && lines >= refState.height )
-		ref.dllFuncs.R_DrawStretchPic( 0, lines - refState.height, refState.width, refState.height - refState.width * 3 / 4, 0, 0, 1, 1, R_GetBuiltinTexture( REF_BLACK_TEXTURE) );
-	ref.dllFuncs.R_DrawStretchPic( 0, lines - refState.width * 3 / 4, refState.width, refState.width * 3 / 4, 0, 0, 1, 1, con.background );
+	Con_SourceLayout( &layout );
+	Platform_GetMousePos( &mouseX, &mouseY );
+	if( con_source_input_dragging )
+	{
+		if( Key_IsDown( K_MOUSE1 ))
+		{
+			con.input.cursor = Con_SourceFieldCursorAtX( &layout, &con.input, mouseX );
+			con.input.selectionEnd = con.input.cursor;
+		}
+		else con_source_input_dragging = false;
+	}
+	if( con_source_output_dragging )
+	{
+		if( Key_IsDown( K_MOUSE1 ))
+		{
+			con_text_position_t position;
+			int selectionX = bound( layout.textX, mouseX, layout.textX + layout.textWidth - 1 );
+			int selectionY = bound( layout.textY, mouseY, layout.textY + layout.textHeight - 1 );
+			if( Con_SourceOutputPositionAtPoint( &layout, selectionX, selectionY, &position ))
+			{
+				con_source_selection_end = position;
+				con_source_output_selection = position.line != con_source_selection_anchor.line ||
+					position.character != con_source_selection_anchor.character;
+			}
+		}
+		else con_source_output_dragging = false;
+	}
+	closeHovered = Con_SourcePointInClose( &layout, mouseX, mouseY );
 
-	if( !con.curFont || !host.allow_console )
-		return; // nothing to draw
+#if XASH_RAYTRACING
+	// The world and HUD are blurred; the console window is composited afterward.
+	Cvar_SetValue( "_rt_menu_overlay", 1.0f );
+#endif
+
+	ref.dllFuncs.GL_SetRenderMode( kRenderTransTexture );
+	ref.dllFuncs.Color4ub( 255, 255, 255, 255 );
+
+	// Keep the treatment consistent with the rest of the Source-style menu UI.
+	Con_SourceFill( 0, 0, refState.width, refState.height, 0, 0, 0, 76 );
+	Con_SourceFill( layout.x, layout.y, layout.width, layout.height, 7, 7, 7, 230 );
+	Con_SourceBorder( layout.x, layout.y, layout.width, layout.height, layout.border, 225 );
+	Con_SourceFill( layout.x + layout.border, layout.y + layout.border,
+		layout.width - layout.border * 2, layout.titleHeight - layout.border, 19, 19, 19, 220 );
+	Con_SourceFill( layout.x + layout.border, layout.y + layout.titleHeight - layout.border,
+		layout.width - layout.border * 2, layout.border, 255, 255, 255, 92 );
+
+	titleHeight = CL_HudTextStyleReady( HUD_TEXT_STYLE_COMPACT ) ?
+		CL_HudTextGetHeight( HUD_TEXT_STYLE_COMPACT ) : con.curFont->charHeight;
+	titleY = layout.y + ( layout.titleHeight - titleHeight ) / 2;
+	titleWidth = Con_SourceDrawHudText( HUD_TEXT_STYLE_COMPACT,
+		layout.x + layout.padding, titleY, "DEVELOPER CONSOLE", 238, 238, 234, 255 );
 
 	// draw current version
-	memcpy( color, g_color_table[7], sizeof( color ));
-
 	Q_snprintf( curbuild, MAX_STRING, "%s %i/%s (%s-%s build %i)", XASH_ENGINE_NAME, PROTOCOL_VERSION, XASH_VERSION, Q_buildos(), Q_buildarch(), Q_buildnum( ));
+	buildMaximumWidth = Q_max( 0, layout.closeX - Q_max( 14, (int)( 20.0f * layout.scale )) -
+		( layout.x + layout.padding + titleWidth ));
+	Con_DrawStringLen( curbuild, &buildWidth, NULL );
+	if( buildWidth <= buildMaximumWidth )
+		Con_SourceDrawConsoleString( layout.closeX - Q_max( 14, (int)( 20.0f * layout.scale )) - buildWidth,
+			layout.y + ( layout.titleHeight - con.curFont->charHeight ) / 2, buildMaximumWidth, curbuild, 125 );
 
-	Con_DrawStringLen( curbuild, &stringLen, &charH );
-	start = refState.width - stringLen;
-	stringLen = Con_StringLength( curbuild );
+	Con_SourceFill( layout.closeX, layout.closeY, layout.closeSize, layout.closeSize,
+		closeHovered ? 40 : 10, closeHovered ? 40 : 10, closeHovered ? 40 : 10, closeHovered ? 245 : 215 );
+	Con_SourceBorder( layout.closeX, layout.closeY, layout.closeSize, layout.closeSize,
+		layout.border, closeHovered ? 255 : 150 );
+	closeTextWidth = Con_SourceHudTextWidth( HUD_TEXT_STYLE_COMPACT, "X" );
+	closeTextHeight = CL_HudTextStyleReady( HUD_TEXT_STYLE_COMPACT ) ?
+		CL_HudTextGetHeight( HUD_TEXT_STYLE_COMPACT ) : con.curFont->charHeight;
+	Con_SourceDrawHudText( HUD_TEXT_STYLE_COMPACT,
+		layout.closeX + ( layout.closeSize - closeTextWidth ) / 2,
+		layout.closeY + ( layout.closeSize - closeTextHeight ) / 2,
+		"X", 245, 245, 241, closeHovered ? 255 : 205 );
 
-	fraction = lines / (float)refState.height;
-	color[3] = Q_min( fraction * 2.0f, 1.0f ) * 255; // fadeout version number
-
-	for( i = 0; i < stringLen; i++ )
-		width += Con_DrawCharacter( start + width, 0, curbuild[i], color );
+	// Output and input are separate, lightly framed panes.
+	Con_SourceFill( layout.textX, layout.textY, layout.textWidth, layout.textHeight, 0, 0, 0, 155 );
+	Con_SourceBorder( layout.textX, layout.textY, layout.textWidth, layout.textHeight, layout.border, 76 );
+	Con_SourceFill( layout.inputX, layout.inputY, layout.inputWidth, layout.inputHeight, 0, 0, 0, 195 );
+	Con_SourceBorder( layout.inputX, layout.inputY, layout.inputWidth, layout.inputHeight, layout.border, 125 );
 
 	// draw the text
 	if( CON_LINES_COUNT > 0 )
 	{
-		int	ymax = lines - (con.curFont->charHeight * 2.0f);
-		int	lastline;
-
 		Con_LastVisibleLine( &lastline );
-		y = ymax - con.curFont->charHeight;
-
-		if( con.backscroll )
-		{
-			start = con.curFont->charWidths[' ']; // offset one space at left screen side
-
-			// draw red arrows to show the buffer is backscrolled
-			for( x = 0; x < con.linewidth; x += 4 )
-				Con_DrawCharacter(( x + 1 ) * start, y, '^', g_color_table[1] );
-			y -= con.curFont->charHeight;
-		}
+		y = layout.textY + layout.textHeight - layout.border - con.curFont->charHeight -
+			Q_max( 5, (int)( 8.0f * layout.scale ));
 		x = lastline;
 
-		while( 1 )
+		while( x >= 0 && y >= layout.textY + layout.border + Q_max( 5, (int)( 8.0f * layout.scale )) )
 		{
-			y -= Con_DrawConsoleLine( y, x );
-
-			// top of console buffer or console window
-			if( x == 0 || y < con.curFont->charHeight )
-				break;
+			int lineHeight = Con_DrawConsoleLine( layout.textX + Q_max( 8, (int)( 12.0f * layout.scale )),
+				y, layout.textWidth - Q_max( 16, (int)( 24.0f * layout.scale )), x );
+			if( lineHeight > 0 )
+				y -= lineHeight;
 			x--;
 		}
 	}
 
-	// draw the input prompt, user text, and cursor if desired
-	Con_DrawInput( lines );
+	// Scrollbar thumb remains at the bottom when following live console output.
+	visibleLines = Q_max( 1, layout.textHeight / Q_max( 1, con.curFont->charHeight ));
+	totalLines = Q_max( visibleLines, CON_LINES_COUNT );
+	scrollRange = Q_max( 0, totalLines - visibleLines );
+	thumbHeight = Q_max( Q_max( 18, (int)( 24.0f * layout.scale )),
+		layout.scrollbarHeight * visibleLines / totalLines );
+	thumbHeight = Q_min( layout.scrollbarHeight, thumbHeight );
+	thumbTravel = layout.scrollbarHeight - thumbHeight;
+	thumbY = layout.scrollbarY + thumbTravel;
+	if( scrollRange > 0 )
+		thumbY -= thumbTravel * Q_min( con.backscroll, scrollRange ) / scrollRange;
+	Con_SourceFill( layout.scrollbarX, layout.scrollbarY, layout.scrollbarWidth,
+		layout.scrollbarHeight, 255, 255, 255, 28 );
+	Con_SourceFill( layout.scrollbarX, thumbY, layout.scrollbarWidth,
+		thumbHeight, 255, 255, 255, con.backscroll ? 190 : 118 );
 
-	y = lines - ( con.curFont->charHeight * 1.2f );
-	SCR_DrawFPS( Q_max( y, 4 )); // to avoid to hide fps counter
+	// draw the input prompt, user text, and cursor if desired
+	Con_DrawInput( &layout );
+
+	if( con.backscroll )
+		Q_snprintf( footer, MAX_STRING, "SCROLLBACK: %i LINES  |  MOUSE WHEEL / PGUP / PGDN", con.backscroll );
+	else
+		Q_strncpy( footer, "ENTER EXECUTE  |  TAB COMPLETE  |  DRAG TO SELECT  |  CTRL+C COPY", sizeof( footer ));
+	footerY = layout.footerY + ( layout.footerHeight - con.curFont->charHeight ) / 2;
+	Con_SourceDrawConsoleString( layout.inputX, footerY, layout.inputWidth, footer, 145 );
+
+	SCR_DrawFPS( Q_max( layout.y + layout.titleHeight, 4 ));
 
 	ref.dllFuncs.Color4ub( 255, 255, 255, 255 );
+#if XASH_RAYTRACING
+	Cvar_SetValue( "_rt_menu_overlay", 0.0f );
+#endif
 }
 
 /*
@@ -2369,33 +2995,26 @@ Scroll it up or down
 */
 void Con_RunConsole( void )
 {
-	float	lines_per_frame;
+	qboolean sourceVisible;
 
 	Con_SetColor( );
 
-	// decide on the destination height of the console
-	if( host.allow_console && cls.key_dest == key_console )
+	sourceVisible = host.allow_console && cls.key_dest == key_console;
+	con.showlines = sourceVisible ? refState.height : 0;
+	con.vislines = con.showlines;
+#if XASH_RAYTRACING
+	Cvar_SetValue( "_rt_console_active", sourceVisible ? 1.0f : 0.0f );
+	if( sourceVisible )
 	{
-		if( cls.state < ca_active || cl.first_frame )
-			con.showlines = refState.height;	// full screen
-		else con.showlines = (refState.height >> 1);	// half screen
+		Cvar_SetValue( "_rt_menu_blur", 1.0f );
+		con_source_blur_active = true;
 	}
-	else con.showlines = 0; // none visible
-
-	lines_per_frame = fabs( scr_conspeed->value ) * host.realframetime;
-
-	if( con.showlines < con.vislines )
+	else if( con_source_blur_active )
 	{
-		con.vislines -= lines_per_frame;
-		if( con.showlines > con.vislines )
-			con.vislines = con.showlines;
+		Cvar_SetValue( "_rt_menu_blur", 0.0f );
+		con_source_blur_active = false;
 	}
-	else if( con.showlines > con.vislines )
-	{
-		con.vislines += lines_per_frame;
-		if( con.showlines < con.vislines )
-			con.vislines = con.showlines;
-	}
+#endif
 
 	if( FBitSet( con_charset->flags,   FCVAR_CHANGED ) ||
 		FBitSet( con_fontscale->flags, FCVAR_CHANGED ) ||
@@ -2451,6 +3070,11 @@ void Con_CharEvent( int key )
 	// distribute the key down event to the apropriate handler
 	if( cls.key_dest == key_console )
 	{
+		if( key == 'c' - 'a' + 1 && con_source_selection_is_output && con_source_output_selection )
+		{
+			Con_SourceCopyOutputSelection();
+			return;
+		}
 		Field_CharEvent( &con.input, key );
 	}
 	else if( cls.key_dest == key_message )
@@ -2580,6 +3204,14 @@ void Con_FastClose( void )
 	Con_ClearNotify();
 	con.showlines = 0;
 	con.vislines = 0;
+#if XASH_RAYTRACING
+	Cvar_SetValue( "_rt_console_active", 0.0f );
+	if( con_source_blur_active )
+	{
+		Cvar_SetValue( "_rt_menu_blur", 0.0f );
+		con_source_blur_active = false;
+	}
+#endif
 }
 
 /*

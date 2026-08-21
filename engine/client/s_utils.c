@@ -33,8 +33,20 @@ int S_ZeroCrossingBefore( wavdata_t *pWaveData, int sample )
 	if( pWaveData->type == WF_PCMDATA )
 	{
 		int	sampleSize;
+		int	channelStep;
 
-		sampleSize = pWaveData->width * pWaveData->channels;
+		if( !pWaveData->buffer || pWaveData->samples <= 0 )
+			return 0;
+		if( pWaveData->channels <= 0 || ( pWaveData->width != 1 && pWaveData->width != 2 ))
+			return bound( 0, sample, pWaveData->samples );
+
+		channelStep = Q_max( 1, pWaveData->channels );
+		if( sample <= 0 )
+			return 0;
+		if( sample >= pWaveData->samples )
+			sample = pWaveData->samples - 1;
+
+		sampleSize = pWaveData->width * channelStep;
 
 		// this can never be zero -- other functions divide by this.
 		// This should never happen, but avoid crashing
@@ -45,7 +57,7 @@ int S_ZeroCrossingBefore( wavdata_t *pWaveData, int sample )
 			signed char	*pData = (signed char *)(pWaveData->buffer + sample * sampleSize);
 			qboolean	zero = false;
 
-			if( pWaveData->channels == 1 )
+			if( channelStep == 1 )
 			{
 				while( sample > 0 && !zero )
 				{
@@ -71,7 +83,7 @@ int S_ZeroCrossingBefore( wavdata_t *pWaveData, int sample )
 					else
 					{
 						sample--;
-						pData--;
+						pData -= channelStep;
 					}
 				}
 			}
@@ -81,7 +93,7 @@ int S_ZeroCrossingBefore( wavdata_t *pWaveData, int sample )
 			short	*pData = (short *)(pWaveData->buffer + sample * sampleSize);
 			qboolean	zero = false;
 
-			if( pWaveData->channels == 1 )
+			if( channelStep == 1 )
 			{
 				while( sample > 0 && !zero )
 				{
@@ -107,7 +119,7 @@ int S_ZeroCrossingBefore( wavdata_t *pWaveData, int sample )
 					else
 					{
 						sample--;
-						pData--;
+						pData -= channelStep;
 					}
 				}
 			}
@@ -130,8 +142,20 @@ int S_ZeroCrossingAfter( wavdata_t *pWaveData, int sample )
 	if( pWaveData->type == WF_PCMDATA )
 	{
 		int	sampleSize;
+		int	channelStep;
 
-		sampleSize = pWaveData->width * pWaveData->channels;
+		if( !pWaveData->buffer || pWaveData->samples <= 0 )
+			return 0;
+		if( pWaveData->channels <= 0 || ( pWaveData->width != 1 && pWaveData->width != 2 ))
+			return bound( 0, sample, pWaveData->samples );
+
+		channelStep = Q_max( 1, pWaveData->channels );
+		if( sample < 0 )
+			sample = 0;
+		if( sample >= pWaveData->samples )
+			return pWaveData->samples;
+
+		sampleSize = pWaveData->width * channelStep;
 
 		// this can never be zero -- other functions divide by this.
 		// This should never happen, but avoid crashing
@@ -142,7 +166,7 @@ int S_ZeroCrossingAfter( wavdata_t *pWaveData, int sample )
 			signed char	*pData = (signed char *)(pWaveData->buffer + sample * sampleSize);
 			qboolean	zero = false;
 
-			if( pWaveData->channels == 1 )
+			if( channelStep == 1 )
 			{
 				while( sample < pWaveData->samples && !zero )
 				{
@@ -168,7 +192,7 @@ int S_ZeroCrossingAfter( wavdata_t *pWaveData, int sample )
 					else
 					{
 						sample++;
-						pData++;
+						pData += channelStep;
 					}
 				}
 			}
@@ -178,9 +202,9 @@ int S_ZeroCrossingAfter( wavdata_t *pWaveData, int sample )
 			short	*pData = (short *)(pWaveData->buffer + sample * sampleSize);
 			qboolean	zero = false;
 
-			if( pWaveData->channels == 1 )
+			if( channelStep == 1 )
 			{
-				while( sample > 0 && !zero )
+				while( sample < pWaveData->samples && !zero )
 				{
 					if( ZERO_X_16( *pData ))
 					{
@@ -195,7 +219,7 @@ int S_ZeroCrossingAfter( wavdata_t *pWaveData, int sample )
 			}
 			else
 			{
-				while( sample > 0 && !zero )
+				while( sample < pWaveData->samples && !zero )
 				{
 					if( ZERO_X_16( *pData ) && ZERO_X_16( pData[1] ))
 					{
@@ -204,7 +228,7 @@ int S_ZeroCrossingAfter( wavdata_t *pWaveData, int sample )
 					else
 					{
 						sample++;
-						pData++;
+						pData += channelStep;
 					}
 				}
 			}

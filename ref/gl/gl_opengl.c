@@ -1047,7 +1047,8 @@ void GL_InitCommands( void )
 
 	CVAR_DEF_T( rt_flsh,					"800",	"flashlight intensity")
 	CVAR_DEF_T( rt_flsh_radius,				"0.02",	"flashlight source disk radius in meters")
-	CVAR_DEF_T( rt_flsh_angle,				"20",	"flashlight width in degrees")
+	CVAR_DEF_T( rt_flsh_angle,				"20",	"flashlight outer cone angle in degrees")
+	CVAR_DEF_T( rt_flsh_angle_inner,		"0",	"flashlight inner cone angle in degrees")
 	CVAR_DEF_T( rt_flsh_r,					"-0.2",	"flashlight position offset - right")
 	CVAR_DEF_T( rt_flsh_u,					"-0.3",	"flashlight position offset - up")
 	CVAR_DEF_T( _rt_flsh_key,				"-1",	"internal variable; d-light key of the player's flashlight")
@@ -1067,7 +1068,7 @@ void GL_InitCommands( void )
 	CVAR_DEF_T( rt_refr_water,				"1.33",	"water index of refraction") 
 	CVAR_DEF_T( rt_refr_thinwidth,			"0.0",	"approx. width of thin media, e.g. thin glass (in meters)") 
 
-	CVAR_DEF_T( rt_mzlflash,				"1",	"enable muzzle flash light source" )
+	CVAR_DEF_T( rt_mzlflash,				"1",	"muzzle flash light intensity multiplier; 0 disables" )
 	CVAR_DEF_T( rt_mzlflash_life,			"0.2",	"how long muzzle flash light should exist" )
 	CVAR_DEF_T( rt_mzlflash_f,				"1.7",	"muzzle flash light offset - forward" )
 	CVAR_DEF_T( rt_mzlflash_u,				"0.0",	"muzzle flash light offset - up" )
@@ -1106,6 +1107,8 @@ void GL_InitCommands( void )
 	CVAR_DEF_T( rt_ef_chraber,				"0.1",	"chromatic aberration intensity" )
 	CVAR_DEF_T( rt_ef_vintage,				"0",	"[0, 4] vintage effects, disabled if rt_renderscale>0" )
 	CVAR_DEF_T( rt_ef_water,				"1",	"warp screen while under water" )
+	CVAR_DEF_T( _rt_menu_blur,				"0",	"internal menu background blur" )
+	CVAR_DEF_T( _rt_menu_overlay,			"0",	"internal sharp menu overlay layer" )
 	CVAR_DEF_T( rt_killfx_distortion,		"1",	"enable the kill effect lens pulse" )
 	CVAR_DEF_T( rt_killfx_lens_strength,	"0.12", "kill effect fisheye zoom strength" )
 	CVAR_DEF_T( rt_killfx_distortion_duration,	"0.08",	"kill effect distortion hold time in seconds" )
@@ -2817,8 +2820,9 @@ static void TryBeginBatch( RgUtilImScratchTopology glbegin_topology )
         RgMeshPrimitiveInfo prim = {
             .pPrimitiveNameInMesh = NULL,
             .primitiveIndexInMesh = 0,
-            .flags                = ( rt_raster_blend ? RG_MESH_PRIMITIVE_TRANSLUCENT : 0 ) |
-                     ( rt_alphatest ? RG_MESH_PRIMITIVE_ALPHA_TESTED : 0 ),
+			.flags                = ( rt_raster_blend ? RG_MESH_PRIMITIVE_TRANSLUCENT : 0 ) |
+					 ( rt_alphatest ? RG_MESH_PRIMITIVE_ALPHA_TESTED : 0 ) |
+					 ( RT_CVAR_TO_BOOL( _rt_menu_overlay ) ? RG_MESH_PRIMITIVE_UI_OVERLAY : 0 ),
             .pTextureName = GetCurrentTexture2DName(),
             .textureFrame = 0,
             .color        = rgUtilPackColorByte4D( 255, 255, 255, 255 ),

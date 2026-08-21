@@ -316,6 +316,9 @@ qboolean V_PreRender( void )
 		return false;
 	}
 
+	// Keep renderer timing current even when no world view is drawn (for example,
+	// on the title screen). Post-effect transitions still need to advance there.
+	R_UpdateRefState();
 	ref.dllFuncs.R_BeginFrame( !cl.paused && ( cls.state == ca_active ));
 
 	GL_UpdateSwapInterval( );
@@ -473,6 +476,7 @@ void V_PostRender( void )
 {
 	static double	oldtime;
 	qboolean		draw_2d = false;
+	qboolean		consoleOverMenu = cls.key_dest == key_console && UI_IsVisible();
 
 	ref.dllFuncs.R_AllowFog( false );
 	ref.dllFuncs.R_Set2DMode( true );
@@ -505,10 +509,20 @@ void V_PostRender( void )
 		CL_DrawHUD( CL_CHANGELEVEL );
 		ref.dllFuncs.R_ShowTextures();
 		R_ShowTree();
-		Con_DrawConsole();
+		if( !consoleOverMenu )
+			Con_DrawConsole();
+#if XASH_RAYTRACING
+		// MainUI is composited after the menu blur. Individual root layers can
+		// temporarily opt back into the blur-eligible layer for modal windows.
+		Cvar_SetValue( "_rt_menu_overlay", 1.0f );
+#endif
 		UI_UpdateMenu( host.realtime );
+		if( consoleOverMenu )
+			Con_DrawConsole();
 #if !XASH_RAYTRACING
 		Con_DrawVersion();
+#else
+		Cvar_SetValue( "_rt_menu_overlay", 0.0f );
 #endif
 		Con_DrawDebug(); // must be last
 		Touch_Draw();
