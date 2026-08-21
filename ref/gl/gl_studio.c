@@ -2930,7 +2930,8 @@ static void R_StudioClientEvents( void )
 #if !XASH_RAYTRACING
 	if( FBitSet( e->curstate.effects, EF_MUZZLEFLASH ))
 #else
-    if( FBitSet( e->curstate.effects, EF_MUZZLEFLASH ) && RT_CVAR_TO_BOOL( rt_mzlflash ) )
+    if( FBitSet( e->curstate.effects, EF_MUZZLEFLASH ) &&
+        RT_CVAR_TO_FLOAT( rt_mzlflash ) > 0.0f )
 #endif
 	{
 		dlight_t	*el = gEngfuncs.CL_AllocElight( 0 );
@@ -2955,8 +2956,9 @@ static void R_StudioClientEvents( void )
         el->color.g = 192;
         el->color.b = 64;
         el->decay  = 320 * RT_CVAR_TO_FLOAT( rt_mzlflash_decay );
-        el->radius  = 24 + 24 * gEngfuncs.COM_RandomFloat( 0.0f, 1.0f ) *
-                              RT_CVAR_TO_FLOAT( rt_mzlflash_size );
+        el->radius  = ( 24 + 24 * gEngfuncs.COM_RandomFloat( 0.0f, 1.0f ) *
+                               RT_CVAR_TO_FLOAT( rt_mzlflash_size ) ) *
+                      RT_CVAR_TO_FLOAT( rt_mzlflash );
         {
             vec3_t v_forward, v_right, v_up;
             AngleVectors( e->angles, v_forward, v_right, v_up );
@@ -2998,6 +3000,14 @@ static void R_StudioClientEvents( void )
         }
 #endif
 	}
+#if XASH_RAYTRACING
+	else if( FBitSet( e->curstate.effects, EF_MUZZLEFLASH ) )
+	{
+		// Intensity zero disables the RT light without leaving the one-frame
+		// effect bit latched on the entity.
+		ClearBits( e->curstate.effects, EF_MUZZLEFLASH );
+	}
+#endif
 
 	sequence = bound( 0, e->curstate.sequence, m_pStudioHeader->numseq - 1 );
 	pseqdesc = (mstudioseqdesc_t *)((byte *)m_pStudioHeader + m_pStudioHeader->seqindex) + sequence;

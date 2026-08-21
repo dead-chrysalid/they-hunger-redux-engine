@@ -1077,6 +1077,8 @@ void RT_UploadAllLights()
             if( IsPlayerFlashlight( l ) )
             {
                 vec3_t pos;
+                const float angleOuter = bound( 0.0f, RT_CVAR_TO_FLOAT( rt_flsh_angle ), 89.0f );
+                const float angleInner = bound( 0.0f, RT_CVAR_TO_FLOAT( rt_flsh_angle_inner ), angleOuter );
                 CalculateFlaslightPosition( pos );
 
                 RgSpotLightUploadInfo info = {
@@ -1087,8 +1089,8 @@ void RT_UploadAllLights()
                     .position     = RT_VEC3( pos ),
                     .direction    = RT_VEC3( RI.vforward ),
                     .radius       = METRIC_TO_QUAKEUNIT( RT_CVAR_TO_FLOAT( rt_flsh_radius ) ),
-                    .angleOuter   = DEG2RAD( RT_CVAR_TO_FLOAT( rt_flsh_angle ) ),
-                    .angleInner   = 0,
+                    .angleOuter   = DEG2RAD( angleOuter ),
+                    .angleInner   = DEG2RAD( angleInner ),
                 };
 
                 RgResult r = rgUploadSpotLight( rg_instance, &info );

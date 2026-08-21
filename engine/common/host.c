@@ -1240,6 +1240,7 @@ int EXPORT Host_Main( int argc, char **argv, const char *progname, int bChangeGa
 	Cvar_Get( "cl_melee_fx_enabled", "1", FCVAR_ARCHIVE, "enable melee camera effects" );
 	Cvar_Get( "cl_autowepswitch", "1", FCVAR_ARCHIVE|FCVAR_USERINFO, "automatically switch to picked-up weapons" );
 	Cvar_Get( "hud_fastswitch", "0", FCVAR_ARCHIVE, "switch weapons without confirmation" );
+	Cvar_Get( "sv_physical_bullets", "0", FCVAR_ARCHIVE, "experimental physical bullet simulation" );
 	Cvar_Get( "sv_interact_pickups_require_use", "1", FCVAR_ARCHIVE, "require use for item pickups" );
 	Cvar_Get( "sv_interact_outline_radius", "240", FCVAR_ARCHIVE, "interaction outline range" );
 	Cvar_Get( "hud_interact_prompt_enabled", "1", FCVAR_ARCHIVE, "show interaction prompts" );
