@@ -344,6 +344,7 @@ void R_DrawModelHull( void );
 //
 void R_SetTextureParameters( void );
 gl_texture_t *R_GetTexture( GLenum texnum );
+qboolean GL_IsTextureValid( GLenum texnum );
 #define GL_LoadTextureInternal( name, pic, flags ) GL_LoadTextureFromBuffer( name, pic, flags, false )
 #define GL_UpdateTextureInternal( name, pic, flags ) GL_LoadTextureFromBuffer( name, pic, flags, true )
 int GL_LoadTexture( const char *name, const byte *buf, size_t size, int flags );

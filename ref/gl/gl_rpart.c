@@ -40,7 +40,10 @@ static color24 gTracerColors[] =
 
 static float CL_TracerSize( particle_t *p )
 {
-	return gTracerSize[p->type] * bound( 0.05f, tracerwidth->value, 10.0f );
+	// Yellow-orange spark streaks are an impact effect, not bullet trails.
+	// Keep them readable when the bullet-trail width is tuned below 1.0.
+	float widthScale = p->color == 5 ? 1.0f : bound( 0.05f, tracerwidth->value, 10.0f );
+	return gTracerSize[p->type] * widthScale;
 }
 
 /*

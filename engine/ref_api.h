@@ -60,6 +60,7 @@ GNU General Public License for more details.
 #define MODEL_LIQUID		BIT( 2 )	// model has only point hull
 #define MODEL_TRANSPARENT		BIT( 3 )	// have transparent surfaces
 #define MODEL_COLORED_LIGHTING	BIT( 4 )	// lightmaps stored as RGB
+#define MODEL_ENGINE_SPRITE		BIT( 28 )	// renderer texture is owned by an engine built-in sprite
 #define MODEL_WORLD			BIT( 29 )	// it's a worldmodel
 #define MODEL_CLIENT		BIT( 30 )	// client sprite
 

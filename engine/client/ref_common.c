@@ -726,7 +726,7 @@ qboolean R_Init( void )
 	Cvar_Get( "tracerred", "0.8", 0, "tracer red component weight ( 0 - 1.0 )" );
 	Cvar_Get( "tracergreen", "0.8", 0, "tracer green component weight ( 0 - 1.0 )" );
 	Cvar_Get( "tracerblue", "0.4", 0, "tracer blue component weight ( 0 - 1.0 )" );
-	Cvar_Get( "traceralpha", "0.5", 0, "tracer alpha amount ( 0 - 1.0 )" );
+	Cvar_Get( "traceralpha", "1.0", 0, "tracer alpha amount ( 0 - 1.0 )" );
 	Cvar_Get( "tracerwidth", "0.75", 0, "tracer width multiplier" );
 
 	Cvar_Get( "r_sprite_lerping", "1", FCVAR_ARCHIVE, "enables sprite animation lerping" );

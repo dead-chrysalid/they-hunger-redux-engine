@@ -1559,6 +1559,10 @@ void CL_RegisterResources( sizebuf_t *msg )
 					Mod_FreeModel( mod );
 			}
 
+			// The sweep above owns HUD registrations. Revalidate the persistent
+			// engine effects after it, before particles/tempents can render.
+			CL_LoadClientSprites();
+
 			Mod_FreeUnused ();
 
 			if( host_developer.value <= DEV_NONE )
@@ -3212,6 +3216,8 @@ void CL_LegacyPrecache_f( void )
 		if( mod->needload == NL_UNREFERENCED && COM_CheckString( mod->name ))
 			Mod_FreeModel( mod );
 	}
+
+	CL_LoadClientSprites();
 
 //	Mod_FreeUnused ();
 

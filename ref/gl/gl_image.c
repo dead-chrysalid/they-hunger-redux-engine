@@ -21,6 +21,7 @@ GNU General Public License for more details.
 static gl_texture_t		gl_textures[MAX_TEXTURES];
 static gl_texture_t*	gl_texturesHashTable[TEXTURES_HASH_SIZE];
 static uint		gl_numTextures;
+static byte		gl_staleTextureWarned[MAX_TEXTURES];
 
 static byte    dottexture[8][8] =
 {
@@ -47,6 +48,13 @@ gl_texture_t *R_GetTexture( GLenum texnum )
 {
 	ASSERT( texnum >= 0 && texnum < MAX_TEXTURES );
 	return &gl_textures[texnum];
+}
+
+qboolean GL_IsTextureValid( GLenum texnum )
+{
+	return texnum > 0 && texnum < MAX_TEXTURES &&
+		gl_textures[texnum].texnum && gl_textures[texnum].name[0] &&
+		gl_textures[texnum].target;
 }
 
 /*
@@ -88,12 +96,15 @@ void GL_Bind( GLint tmu, GLenum texnum )
 
 	// Missing, invalid, or already freed texture? A freed slot must not inherit
 	// the previously bound RT material name.
-	if( texnum <= 0 || texnum >= MAX_TEXTURES ||
-		!gl_textures[texnum].texnum || !gl_textures[texnum].name[0] ||
-		!gl_textures[texnum].target )
+	if( !GL_IsTextureValid( texnum ))
 	{
 		if( texnum != 0 )
-			gEngfuncs.Con_DPrintf( S_ERROR "GL_Bind: invalid or stale texturenum %d\n", texnum );
+		{
+			if( texnum >= MAX_TEXTURES || !gl_staleTextureWarned[texnum] )
+				gEngfuncs.Con_DPrintf( S_ERROR "GL_Bind: invalid or stale texturenum %d\n", texnum );
+			if( texnum < MAX_TEXTURES )
+				gl_staleTextureWarned[texnum] = true;
+		}
 		texnum = tr.defaultTexture;
 	}
 	if( tmu != GL_KEEP_UNIT )
@@ -1452,6 +1463,7 @@ static gl_texture_t *GL_AllocTexture( const char *name, texFlags_t flags )
 	}
 
 	tex = &gl_textures[i];
+	gl_staleTextureWarned[i] = false;
 
 #if XASH_RAYTRACING
 	// special names for RT: if *.mip, then put inside "#maps" folder
@@ -1546,6 +1558,7 @@ static void GL_DeleteTexture( gl_texture_t *tex )
     if( glw_state.initialized )
         pglDeleteTextures( tex->name );
 #endif
+	gl_staleTextureWarned[tex - gl_textures] = false;
 	memset( tex, 0, sizeof( *tex ));
 }
 
@@ -2354,6 +2367,7 @@ void R_InitImages( void )
 {
 	memset( gl_textures, 0, sizeof( gl_textures ));
 	memset( gl_texturesHashTable, 0, sizeof( gl_texturesHashTable ));
+	memset( gl_staleTextureWarned, 0, sizeof( gl_staleTextureWarned ));
 	gl_numTextures = 0;
 
 	// create unused 0-entry
@@ -2389,5 +2403,6 @@ void R_ShutdownImages( void )
 	memset( tr.lightmapTextures, 0, sizeof( tr.lightmapTextures ));
 	memset( gl_texturesHashTable, 0, sizeof( gl_texturesHashTable ));
 	memset( gl_textures, 0, sizeof( gl_textures ));
+	memset( gl_staleTextureWarned, 0, sizeof( gl_staleTextureWarned ));
 	gl_numTextures = 0;
 }

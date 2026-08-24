@@ -64,7 +64,16 @@ static const dframetype_t *R_SpriteLoadFrame( model_t *mod, const void *pin, msp
 #endif
 
 	// build uinque frame name
-	if( FBitSet( mod->flags, MODEL_CLIENT )) // it's a HUD sprite
+	if( FBitSet( mod->flags, MODEL_ENGINE_SPRITE ))
+	{
+#if !XASH_RAYTRACING
+		Q_snprintf( texname, sizeof( texname ), "#ENGINE/%s(%s:%i%i).spr", sprite_name, group_suffix, num / 10, num % 10 );
+#else
+		Q_snprintf( texname, sizeof( texname ), "#ENGINE/%s/%s_%i%i.spr", sprite_name, group_suffix, num / 10, num % 10 );
+#endif
+		gl_texturenum = GL_LoadTexture( texname, pin, pinframe.width * pinframe.height * bytes, r_texFlags );
+	}
+	else if( FBitSet( mod->flags, MODEL_CLIENT )) // it's a HUD sprite
 	{
 #if !XASH_RAYTRACING
 		Q_snprintf( texname, sizeof( texname ), "#HUD/%s(%s:%i%i).spr", sprite_name, group_suffix, num / 10, num % 10 );
