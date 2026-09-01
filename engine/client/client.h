@@ -39,6 +39,7 @@ GNU General Public License for more details.
 #define SPR_CLIENT		0	// client sprite for temp-entities or user-textures
 #define SPR_HUDSPRITE	1	// hud sprite
 #define SPR_MAPSPRITE	2	// contain overview.bmp that diced into frames 128x128
+#define SPR_ENGINE		3	// engine-owned temp-entity sprite with an isolated texture namespace
 
 //=============================================================================
 typedef struct netbandwithgraph_s
@@ -1008,6 +1009,7 @@ cl_entity_t *R_BeamGetEntity( int index );
 void CL_KillDeadBeams( cl_entity_t *pDeadEntity );
 void CL_ParseViewBeam( sizebuf_t *msg, int beamType );
 void CL_LoadClientSprites( void );
+model_t *CL_LoadEngineSprite( const char *filename );
 void CL_KeepClientSprites( void );
 void CL_ReadPointFile_f( void );
 void CL_DrawEFX( float time, qboolean fTrans );

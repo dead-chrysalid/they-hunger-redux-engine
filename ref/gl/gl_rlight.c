@@ -1111,7 +1111,7 @@ void RT_UploadAllLights()
                     .uniqueID     = is_e_light ? RT_IDBASE_ELIGHT + i : RT_IDBASE_DLIGHT + i,
                     .isExportable = false,
                     .color     = rgUtilPackColorByte4D( l->color.r, l->color.g, l->color.b, 255 ),
-                    .intensity = RT_CVAR_TO_FLOAT( rt_light_d ) * falloff_mult,
+                    .intensity = RT_CVAR_TO_FLOAT( rt_light_d ) * falloff_mult * Q_max( 0.0f, l->intensity ),
                     .position  = RT_VEC3( l->origin ),
                     .radius    = METRIC_TO_QUAKEUNIT( RT_CVAR_TO_FLOAT( rt_light_radius ) ),
                 };

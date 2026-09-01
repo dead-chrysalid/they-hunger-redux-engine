@@ -60,7 +60,12 @@ static const dframetype_t *R_SpriteLoadFrame( model_t *mod, const void *pin, msp
 		bytes = 4;
 
 	// build uinque frame name
-	if( FBitSet( mod->flags, MODEL_CLIENT )) // it's a HUD sprite
+	if( FBitSet( mod->flags, MODEL_ENGINE_SPRITE ))
+	{
+		Q_snprintf( texname, sizeof( texname ), "#ENGINE/%s(%s:%i%i).spr", sprite_name, group_suffix, num / 10, num % 10 );
+		gl_texturenum = GL_LoadTexture( texname, pin, pinframe.width * pinframe.height * bytes, r_texFlags );
+	}
+	else if( FBitSet( mod->flags, MODEL_CLIENT )) // it's a HUD sprite
 	{
 		Q_snprintf( texname, sizeof( texname ), "#HUD/%s(%s:%i%i).spr", sprite_name, group_suffix, num / 10, num % 10 );
 		gl_texturenum = GL_LoadTexture( texname, pin, pinframe.width * pinframe.height * bytes, r_texFlags );
@@ -377,7 +382,7 @@ void Mod_SpriteUnloadTextures( void *data )
 
 				for( j = 0; j < pspritegroup->numframes; j++ )
 				{
-					pspriteframe = pspritegroup->frames[i];
+					pspriteframe = pspritegroup->frames[j];
 					GL_FreeTexture( pspriteframe->gl_texturenum );
 				}
 			}

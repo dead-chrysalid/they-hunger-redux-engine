@@ -24,6 +24,13 @@ static int gSparkRamp[9] = { 0xfe, 0xfd, 0xfc, 0x6f, 0x6e, 0x6d, 0x6c, 0x67, 0x6
 convar_t		*tracerspeed;
 convar_t		*tracerlength;
 convar_t		*traceroffset;
+static convar_t	*bullet_impact_flash;
+static convar_t	*bullet_impact_flash_red;
+static convar_t	*bullet_impact_flash_green;
+static convar_t	*bullet_impact_flash_blue;
+static convar_t	*bullet_impact_flash_radius;
+static convar_t	*bullet_impact_flash_lifetime;
+static convar_t	*bullet_impact_flash_intensity;
 
 particle_t	*cl_active_particles;
 particle_t	*cl_active_tracers;
@@ -103,6 +110,14 @@ void CL_InitParticles( void )
 	tracerspeed = Cvar_Get( "tracerspeed", "6000", 0, "tracer speed" );
 	tracerlength = Cvar_Get( "tracerlength", "0.8", 0, "tracer length factor" );
 	traceroffset = Cvar_Get( "traceroffset", "30", 0, "tracer starting offset" );
+	bullet_impact_flash = Cvar_Get( "r_bullet_impact_flash", "1", FCVAR_ARCHIVE, "enable bullet impact point-light flashes" );
+	Cvar_Get( "r_bullet_impact_flash_enemies", "0", FCVAR_ARCHIVE, "enable bullet impact flashes on enemy and model hits" );
+	bullet_impact_flash_red = Cvar_Get( "r_bullet_impact_flash_red", "255", FCVAR_ARCHIVE, "bullet impact flash red channel" );
+	bullet_impact_flash_green = Cvar_Get( "r_bullet_impact_flash_green", "190", FCVAR_ARCHIVE, "bullet impact flash green channel" );
+	bullet_impact_flash_blue = Cvar_Get( "r_bullet_impact_flash_blue", "96", FCVAR_ARCHIVE, "bullet impact flash blue channel" );
+	bullet_impact_flash_radius = Cvar_Get( "r_bullet_impact_flash_radius", "48", FCVAR_ARCHIVE, "bullet impact flash radius" );
+	bullet_impact_flash_lifetime = Cvar_Get( "r_bullet_impact_flash_lifetime", "0.05", FCVAR_ARCHIVE, "bullet impact flash lifetime" );
+	bullet_impact_flash_intensity = Cvar_Get( "r_bullet_impact_flash_intensity", "1", FCVAR_ARCHIVE, "bullet impact flash intensity multiplier" );
 }
 
 /*
@@ -1688,8 +1703,31 @@ void GAME_EXPORT R_BulletImpactParticles( const vec3_t pos )
 	int		i, quantity;
 	int		color;
 	float		dist;
+	float		radius, lifetime;
 	vec3_t		dir;
 	particle_t	*p;
+	dlight_t	*dl;
+
+	if( bullet_impact_flash->value != 0.0f )
+	{
+		radius = bound( 1.0f, bullet_impact_flash_radius->value, 512.0f );
+		lifetime = bound( 0.005f, bullet_impact_flash_lifetime->value, 1.0f );
+
+		// The streak particles are easy to miss in the ray-traced renderer. Add a
+		// configurable short point light without coupling it to particle width.
+		dl = CL_AllocDlight( 0 );
+		if( dl )
+		{
+			VectorCopy( pos, dl->origin );
+			dl->radius = radius;
+			dl->color.r = (byte)bound( 0.0f, bullet_impact_flash_red->value, 255.0f );
+			dl->color.g = (byte)bound( 0.0f, bullet_impact_flash_green->value, 255.0f );
+			dl->color.b = (byte)bound( 0.0f, bullet_impact_flash_blue->value, 255.0f );
+			dl->intensity = bound( 0.0f, bullet_impact_flash_intensity->value, 16.0f );
+			dl->die = cl.time + lifetime;
+			dl->decay = radius / lifetime;
+		}
+	}
 
 	VectorSubtract( pos, refState.vieworg, dir );
 	dist = VectorLength( dir );
@@ -2185,4 +2223,3 @@ void CL_ThinkParticle( double frametime, particle_t *p )
 		break;
 	}
 }
-

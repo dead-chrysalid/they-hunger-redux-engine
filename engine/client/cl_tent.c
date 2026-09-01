@@ -96,14 +96,14 @@ INTERNAL RESOURCE
 */
 void CL_LoadClientSprites( void )
 {
-	cl_sprite_muzzleflash[0] = CL_LoadClientSprite( cl_default_sprites[0] );
-	cl_sprite_muzzleflash[1] = CL_LoadClientSprite( cl_default_sprites[1] );
-	cl_sprite_muzzleflash[2] = CL_LoadClientSprite( cl_default_sprites[2] );
+	cl_sprite_muzzleflash[0] = CL_LoadEngineSprite( cl_default_sprites[0] );
+	cl_sprite_muzzleflash[1] = CL_LoadEngineSprite( cl_default_sprites[1] );
+	cl_sprite_muzzleflash[2] = CL_LoadEngineSprite( cl_default_sprites[2] );
 
-	cl_sprite_dot = CL_LoadClientSprite( cl_default_sprites[3] );
-	cl_sprite_glow = CL_LoadClientSprite( cl_default_sprites[4] );
-	cl_sprite_ricochet = CL_LoadClientSprite( cl_default_sprites[5] );
-	cl_sprite_shell = CL_LoadClientSprite( cl_default_sprites[6] );
+	cl_sprite_dot = CL_LoadEngineSprite( cl_default_sprites[3] );
+	cl_sprite_glow = CL_LoadEngineSprite( cl_default_sprites[4] );
+	cl_sprite_ricochet = CL_LoadEngineSprite( cl_default_sprites[5] );
+	cl_sprite_shell = CL_LoadEngineSprite( cl_default_sprites[6] );
 }
 
 /*
@@ -111,8 +111,8 @@ void CL_LoadClientSprites( void )
 CL_KeepClientSprites
 
 Keep engine-owned tempent sprites across client sprite registration passes.
-Their model pointers live for the whole renderer lifetime, so allowing the
-unused-sprite sweep to free them leaves cached frame texture numbers behind.
+Their texture names are isolated from HUD/client registrations, and their
+model pointers live for the whole renderer lifetime.
 ================
 */
 void CL_KeepClientSprites( void )
@@ -2581,6 +2581,7 @@ dlight_t *CL_AllocDlight( int key )
 				// reuse this light
 				memset( dl, 0, sizeof( *dl ));
 				dl->key = key;
+				dl->intensity = 1.0f;
 				return dl;
 			}
 		}
@@ -2593,6 +2594,7 @@ dlight_t *CL_AllocDlight( int key )
 		{
 			memset( dl, 0, sizeof( *dl ));
 			dl->key = key;
+			dl->intensity = 1.0f;
 			return dl;
 		}
 	}
@@ -2601,6 +2603,7 @@ dlight_t *CL_AllocDlight( int key )
 	dl = &cl_dlights[0];
 	memset( dl, 0, sizeof( *dl ));
 	dl->key = key;
+	dl->intensity = 1.0f;
 
 	return dl;
 }
@@ -2626,6 +2629,7 @@ dlight_t *CL_AllocElight( int key )
 				// reuse this light
 				memset( dl, 0, sizeof( *dl ));
 				dl->key = key;
+				dl->intensity = 1.0f;
 				return dl;
 			}
 		}
@@ -2638,6 +2642,7 @@ dlight_t *CL_AllocElight( int key )
 		{
 			memset( dl, 0, sizeof( *dl ));
 			dl->key = key;
+			dl->intensity = 1.0f;
 			return dl;
 		}
 	}
@@ -2646,6 +2651,7 @@ dlight_t *CL_AllocElight( int key )
 	dl = &cl_elights[0];
 	memset( dl, 0, sizeof( *dl ));
 	dl->key = key;
+	dl->intensity = 1.0f;
 
 	return dl;
 }

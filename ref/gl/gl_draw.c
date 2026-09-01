@@ -51,10 +51,13 @@ void R_GetSpriteParms( int *frameWidth, int *frameHeight, int *numFrames, int cu
 
 int R_GetSpriteTexture( const model_t *m_pSpriteModel, int frame )
 {
+	int texnum;
+
 	if( !m_pSpriteModel || m_pSpriteModel->type != mod_sprite || !m_pSpriteModel->cache.data )
 		return 0;
 
-	return R_GetSpriteFrame( m_pSpriteModel, frame, 0.0f )->gl_texturenum;
+	texnum = R_GetSpriteFrame( m_pSpriteModel, frame, 0.0f )->gl_texturenum;
+	return GL_IsTextureValid( texnum ) ? texnum : 0;
 }
 
 /*

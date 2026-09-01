@@ -1433,7 +1433,9 @@ static qboolean CL_LoadHudImageSprite( const char *szSpriteName, const byte *buf
 
 	SetBits( imageFlags, TF_IMAGE );
 
-	if( type == SPR_CLIENT || type == SPR_HUDSPRITE )
+	if( type == SPR_ENGINE )
+		Q_snprintf( texname, sizeof( texname ), "#ENGINE/%s", szSpriteName );
+	else if( type == SPR_CLIENT || type == SPR_HUDSPRITE )
 		Q_snprintf( texname, sizeof( texname ), "#HUD/%s", szSpriteName );
 	else Q_snprintf( texname, sizeof( texname ), "#SPR/%s", szSpriteName );
 
@@ -1493,8 +1495,10 @@ static qboolean CL_LoadHudSprite( const char *szSpriteName, model_t *m_pSprite, 
 	Q_strncpy( m_pSprite->name, szSpriteName, sizeof( m_pSprite->name ));
 
 	// it's hud sprite, make difference names to prevent free shared textures
-	if( type == SPR_CLIENT || type == SPR_HUDSPRITE )
+	if( type == SPR_CLIENT || type == SPR_HUDSPRITE || type == SPR_ENGINE )
 		SetBits( m_pSprite->flags, MODEL_CLIENT );
+	if( type == SPR_ENGINE )
+		SetBits( m_pSprite->flags, MODEL_ENGINE_SPRITE );
 	m_pSprite->numtexinfo = texFlags; // store texFlags into numtexinfo
 
 	if( !FS_FileExists( szSpriteName, false ) )
@@ -1574,6 +1578,19 @@ static model_t *CL_LoadSpriteModel( const char *filename, uint type, uint texFla
 	{
 		if( !Q_stricmp( mod->name, name ))
 		{
+			if( type == SPR_ENGINE &&
+				( !FBitSet( mod->flags, MODEL_ENGINE_SPRITE ) ||
+				  !mod->mempool || !mod->cache.data ||
+				  ref.dllFuncs.R_GetSpriteTexture( mod, 0 ) <= 0 ))
+			{
+				// A map/HUD registration may have released a texture that this
+				// persistent model still names. Rebuild it in the engine namespace.
+				Mod_FreeModel( mod );
+				if( CL_LoadHudSprite( name, mod, type, texFlags ))
+					return mod;
+				return NULL;
+			}
+
 			if( mod->needload == NL_NEEDS_LOADED )
 			{
 				if( CL_LoadHudSprite( name, mod, type, texFlags ))
@@ -1612,6 +1629,19 @@ load sprites for temp ents
 model_t *CL_LoadClientSprite( const char *filename )
 {
 	return CL_LoadSpriteModel( filename, SPR_CLIENT, 0 );
+}
+
+/*
+=============
+CL_LoadEngineSprite
+
+Load renderer-owned effect sprites in a namespace that cannot be released by
+an unrelated HUD/client sprite registration with the same source filename.
+=============
+*/
+model_t *CL_LoadEngineSprite( const char *filename )
+{
+	return CL_LoadSpriteModel( filename, SPR_ENGINE, 0 );
 }
 
 /*
@@ -1669,7 +1699,8 @@ const model_t *CL_GetSpritePointer( HSPRITE hSprite )
 
 	if( mod->needload == NL_NEEDS_LOADED )
 	{
-		int	type = FBitSet( mod->flags, MODEL_CLIENT ) ? SPR_HUDSPRITE : SPR_MAPSPRITE;
+		int	type = FBitSet( mod->flags, MODEL_ENGINE_SPRITE ) ? SPR_ENGINE :
+			FBitSet( mod->flags, MODEL_CLIENT ) ? SPR_HUDSPRITE : SPR_MAPSPRITE;
 
 		if( CL_LoadHudSprite( mod->name, mod, type, mod->numtexinfo ))
 			return mod;

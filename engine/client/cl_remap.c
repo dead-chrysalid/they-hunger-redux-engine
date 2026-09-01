@@ -396,17 +396,27 @@ void CL_FreeRemapInfo( remap_info_t *info )
 
 	Assert( info != NULL );
 
-	// release all colormap texture copies
-	for( i = 0; i < info->numtextures; i++ )
+	// Studio and alias remaps use separate storage. Studio remaps append a
+	// variable-length mstudiotexture_t array after remap_info_t, while alias
+	// remaps use the fixed textures[MAX_SKINS] member. Do not inspect both:
+	// studio models may have more than MAX_SKINS textures, so indexing the
+	// alias array with the studio count walks into ptexture and the appended
+	// texture names and interprets those bytes as renderer texture handles.
+	if( info->ptexture != NULL )
 	{
-		if( info->ptexture != NULL )
+		for( i = 0; i < info->numtextures; i++ )
 		{
 			if( FBitSet( info->ptexture[i].flags, STUDIO_NF_COLORMAP ))
 				ref.dllFuncs.GL_FreeTexture( info->ptexture[i].index );
 		}
-
-		if( info->textures[i] != 0 )
-			ref.dllFuncs.GL_FreeTexture( info->textures[i] );
+	}
+	else
+	{
+		for( i = 0; i < info->numtextures && i < MAX_SKINS; i++ )
+		{
+			if( info->textures[i] != 0 )
+				ref.dllFuncs.GL_FreeTexture( info->textures[i] );
+		}
 	}
 
 	Mem_Free( info ); // release struct
