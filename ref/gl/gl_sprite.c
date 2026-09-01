@@ -402,7 +402,7 @@ void Mod_SpriteUnloadTextures( void *data )
 
 				for( j = 0; j < pspritegroup->numframes; j++ )
 				{
-					pspriteframe = pspritegroup->frames[i];
+					pspriteframe = pspritegroup->frames[j];
 					GL_FreeTexture( pspriteframe->gl_texturenum );
 				}
 			}

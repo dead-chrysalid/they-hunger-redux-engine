@@ -3220,13 +3220,20 @@ static int R_StudioDrawPlayer( int flags, entity_state_t *pplayer )
 		{
 			cl_entity_t	saveent = *RI.currententity;
 			model_t		*pweaponmodel = gEngfuncs.pfnGetModelByIndex( pplayer->weaponmodel );
+			studiohdr_t	*pweaponheader = (studiohdr_t *)gEngfuncs.Mod_Extradata( mod_studio, pweaponmodel );
 
-			m_pStudioHeader = (studiohdr_t *)gEngfuncs.Mod_Extradata( mod_studio, pweaponmodel );
-
-			R_StudioMergeBones( RI.currententity, pweaponmodel );
-			R_StudioSetupLighting( &lighting );
-			R_StudioRenderModel( );
-			R_StudioCalcAttachments( );
+			// Save restoration can expose the player's weapon index for a frame
+			// before that model is registered. Mod_Extradata returns NULL in that
+			// transition; skip the attachment instead of dereferencing a missing
+			// studio header in R_StudioMergeBones.
+			if( pweaponmodel && pweaponheader )
+			{
+				m_pStudioHeader = pweaponheader;
+				R_StudioMergeBones( RI.currententity, pweaponmodel );
+				R_StudioSetupLighting( &lighting );
+				R_StudioRenderModel( );
+				R_StudioCalcAttachments( );
+			}
 
 			*RI.currententity = saveent;
 		}

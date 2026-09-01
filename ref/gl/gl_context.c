@@ -425,6 +425,9 @@ static const RgEditorCvarDescriptor rt_editor_base_cvars[] =
 	CVAR_INT( "hud_v7_status_hazard_icon_y", "Hazard icon Y", "HUD v7 / Status Health", 72, -256, 512 ),
 	CVAR_FLOAT( "hud_v7_status_hazard_icon_scale", "Hazard icon scale", "HUD v7 / Status Health", 0.055f, 0.005f, 1.0f, 0.005f, "%.3f" ),
 
+	CVAR_FLOAT( "hud_boss_portrait_scale", "Portrait scale", "HUD / Boss Health", 1.0f, 0.25f, 4.0f, 0.01f, "%.2f x" ),
+	CVAR_FLOAT( "hud_boss_bar_scale", "Healthbar scale", "HUD / Boss Health", 1.0f, 0.25f, 4.0f, 0.01f, "%.2f x" ),
+
 	CVAR_INT( "hud_v7_status_item_icon_x", "Health-kit icon X", "HUD v7 / Status Item", 218, -256, 1024 ),
 	CVAR_INT( "hud_v7_status_item_icon_y", "Health-kit icon Y", "HUD v7 / Status Item", 69, -256, 512 ),
 	CVAR_FLOAT( "hud_v7_status_item_icon_scale", "Health-kit icon scale", "HUD v7 / Status Item", 0.36f, 0.01f, 4.0f, 0.01f, "%.2f" ),
@@ -507,6 +510,10 @@ static const RgEditorCvarDescriptor rt_editor_base_cvars[] =
 	CVAR_FLOAT( "sv_stamina_sprint_cooldown", "Sprint restart cooldown", "Gameplay / Stamina", 0.35f, 0.0f, 5.0f, 0.05f, "%.2f s" ),
 	CVAR_FLOAT( "sv_stamina_jump_cost", "Jump cost", "Gameplay / Stamina", 200.0f, 0.0f, 10000.0f, 10.0f, "%.0f" ),
 	CVAR_FLOAT( "sv_stamina_underwater_seconds", "Full O2 duration", "Gameplay / Stamina", 12.0f, 0.1f, 120.0f, 0.5f, "%.1f s" ),
+
+	CVAR_BOOL( "sv_hitscan_impact_delay", "Enabled", "Gameplay / Deferred Hitscan", 1.0f ),
+	CVAR_FLOAT( "sv_hitscan_impact_delay_min", "Minimum impact delay", "Gameplay / Deferred Hitscan", 0.02f, 0.0f, 0.25f, 0.001f, "%.3f s" ),
+	CVAR_FLOAT( "sv_hitscan_impact_delay_max", "Maximum impact delay", "Gameplay / Deferred Hitscan", 0.06f, 0.0f, 0.25f, 0.001f, "%.3f s" ),
 
 	CVAR_FLOAT( "rt_flsh", "Intensity", "Lighting / Flashlight", 800.0f, 0.0f, 5000.0f, 10.0f, "%.0f" ),
 	CVAR_FLOAT( "rt_flsh_radius", "Emitter radius", "Lighting / Flashlight", 0.02f, 0.0f, 0.50f, 0.005f, "%.3f m" ),

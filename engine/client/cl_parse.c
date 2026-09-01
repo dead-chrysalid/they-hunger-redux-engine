@@ -1534,9 +1534,6 @@ void CL_RegisterResources( sizebuf_t *msg )
 		{
 			Con_Printf( "Setting up renderer...\n" );
 
-			// load tempent sprites (glowshell, muzzleflashes etc)
-			CL_LoadClientSprites ();
-
 			// invalidate all decal indexes
 			memset( cl.decal_index, 0, sizeof( cl.decal_index ));
 			cl.video_prepped = true;
@@ -1547,23 +1544,24 @@ void CL_RegisterResources( sizebuf_t *msg )
 			// update the ref state.
 			R_UpdateRefState ();
 
-			// tell rendering system we have a new set of models.
-			ref.dllFuncs.R_NewMap ();
-
-			CL_SetupOverviewParams();
-
-			// release unused SpriteTextures
-			for( i = 1, mod = clgame.sprites; i < MAX_CLIENT_SPRITES; i++, mod++ )
+			// Purge the previous registration before R_NewMap allocates the new
+			// skybox and lightmaps. Numeric texture slots are reusable, so freeing
+			// an old model after those allocations can delete a new-map texture.
+			for( i = 0, mod = clgame.sprites; i < MAX_CLIENT_SPRITES; i++, mod++ )
 			{
 				if( mod->needload == NL_UNREFERENCED && COM_CheckString( mod->name ))
 					Mod_FreeModel( mod );
 			}
 
-			// The sweep above owns HUD registrations. Revalidate the persistent
-			// engine effects after it, before particles/tempents can render.
+			Mod_FreeUnused ();
+
+			// Revalidate persistent effects only after the final destructive sweep.
 			CL_LoadClientSprites();
 
-			Mod_FreeUnused ();
+			// The renderer can now safely allocate resources for the new map.
+			ref.dllFuncs.R_NewMap ();
+
+			CL_SetupOverviewParams();
 
 			if( host_developer.value <= DEV_NONE )
 				Con_ClearNotify(); // clear any lines of console text
@@ -3192,9 +3190,6 @@ void CL_LegacyPrecache_f( void )
 
 	Con_Printf( "Setting up renderer...\n" );
 
-	// load tempent sprites (glowshell, muzzleflashes etc)
-	CL_LoadClientSprites ();
-
 	// invalidate all decal indexes
 	memset( cl.decal_index, 0, sizeof( cl.decal_index ));
 	cl.video_prepped = true;
@@ -3205,13 +3200,8 @@ void CL_LegacyPrecache_f( void )
 	// update the ref state.
 	R_UpdateRefState ();
 
-	// tell rendering system we have a new set of models.
-	ref.dllFuncs.R_NewMap ();
-
-	CL_SetupOverviewParams();
-
-	// release unused SpriteTextures
-	for( i = 1, mod = clgame.sprites; i < MAX_CLIENT_SPRITES; i++, mod++ )
+	// Release old client sprite owners before new-map renderer allocations.
+	for( i = 0, mod = clgame.sprites; i < MAX_CLIENT_SPRITES; i++, mod++ )
 	{
 		if( mod->needload == NL_UNREFERENCED && COM_CheckString( mod->name ))
 			Mod_FreeModel( mod );
@@ -3220,6 +3210,10 @@ void CL_LegacyPrecache_f( void )
 	CL_LoadClientSprites();
 
 //	Mod_FreeUnused ();
+
+	ref.dllFuncs.R_NewMap ();
+
+	CL_SetupOverviewParams();
 
 	if( host_developer.value <= DEV_NONE )
 		Con_ClearNotify(); // clear any lines of console text

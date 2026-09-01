@@ -16,8 +16,16 @@ and the purple default texture.
 - Their renderer names live under `#ENGINE/`, never `#HUD/`.
 - The map registration path revalidates the seven built-in sprites after the
   HUD/client sprite sweep.
+- All old-map model and client-sprite destruction completes before `R_NewMap`
+  allocates the next skybox and lightmaps. This prevents an old numeric handle
+  from deleting a newly allocated texture that reused its slot.
 - `R_GetSpriteTexture` rejects deleted GL slots before `TriSpriteTexture` can
   draw the purple missing-texture fallback.
+- Grouped sprite teardown frees frame `j` rather than repeatedly freeing frame
+  `i`, and all client-sprite sweeps now index the same slot they test.
+- Studio and alias remaps free only their own backing storage. Studio remaps
+  may exceed `MAX_SKINS`; their variable-length texture count must never index
+  the fixed alias handle array, or texture-name bytes can be freed as handles.
 - `GL_Bind` retains one diagnostic per stale slot, but suppresses per-frame
   repetition until that slot is allocated again.
 

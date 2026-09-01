@@ -1946,6 +1946,11 @@ void GL_FreeTexture( GLenum texnum )
 {
 	// number 0 it's already freed
 	if( texnum <= 0 ) return;
+	if( texnum >= MAX_TEXTURES )
+	{
+		gEngfuncs.Con_Printf( S_ERROR "GL_FreeTexture: invalid texturenum %u\n", texnum );
+		return;
+	}
 
 	GL_DeleteTexture( &gl_textures[texnum] );
 }

@@ -553,7 +553,7 @@ void R_Shutdown( void )
 	model_t *mod;
 
 	// release SpriteTextures
-	for( i = 1, mod = clgame.sprites; i < MAX_CLIENT_SPRITES; i++, mod++ )
+	for( i = 0, mod = clgame.sprites; i < MAX_CLIENT_SPRITES; i++, mod++ )
 	{
 		if( !mod->name[0] ) continue;
 		Mod_FreeModel( mod );
