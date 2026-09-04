@@ -21,6 +21,7 @@ GNU General Public License for more details.
 #include "studio.h"
 #include "pm_local.h"
 #include "pmtrace.h"
+#include "viewmodel_scale.h"
 
 #define EVENT_CLIENT	5000	// less than this value it's a server-side studio events
 #define MAX_LOCALLIGHTS	4
@@ -123,6 +124,9 @@ typedef struct
 // studio-related cvars
 static cvar_t			*r_studio_sort_textures;
 static cvar_t			*cl_righthand = NULL;
+#if XASH_RAYTRACING
+static cvar_t			*rt_viewmodel_reach = NULL;
+#endif
 #if !XASH_RAYTRACING
 static cvar_t* r_studio_drawelements;
 #endif
@@ -204,6 +208,24 @@ static qboolean R_AllowFlipViewModel( cl_entity_t *e )
 
 	return false;
 }
+
+#if XASH_RAYTRACING
+static float R_StudioViewmodelScale( void )
+{
+	if( !rt_viewmodel_reach || RI.currententity != gEngfuncs.GetViewModel() || !RI.currententity->model )
+		return 1.0f;
+	return SH_ViewmodelScaleForReach( RI.currententity->model->name, rt_viewmodel_reach->value );
+}
+
+static void R_StudioScaleViewmodelPoint( vec3_t point, float scale )
+{
+	int axis;
+	// Scaling about the eye preserves every projection ray, including ADS.
+	// Do not scale the bone matrices: lighting assumes orthonormal rotations.
+	for( axis = 0; axis < 3; axis++ )
+		point[axis] = RI.vieworg[axis] + scale * (point[axis] - RI.vieworg[axis]);
+}
+#endif
 
 /*
 ================
@@ -1312,13 +1334,21 @@ static void R_StudioCalcAttachments( void )
 {
 	mstudioattachment_t	*pAtt;
 	int		i;
+#if XASH_RAYTRACING
+	float scale = R_StudioViewmodelScale();
+#endif
 
 	// calculate attachment points
 	pAtt = (mstudioattachment_t *)((byte *)m_pStudioHeader + m_pStudioHeader->attachmentindex);
 
-	for( i = 0; i < Q_min( MAXSTUDIOATTACHMENTS, m_pStudioHeader->numattachments ); i++ )
+	// MDLs allow more attachments than the four exposed by client API 10.
+	for( i = 0; i < Q_min( 4, m_pStudioHeader->numattachments ); i++ )
 	{
 		Matrix3x4_VectorTransform( g_studio.lighttransform[pAtt[i].bone], pAtt[i].org, RI.currententity->attachment[i] );
+#if XASH_RAYTRACING
+		if( scale != 1.0f )
+			R_StudioScaleViewmodelPoint( RI.currententity->attachment[i], scale );
+#endif
 	}
 }
 
@@ -2371,6 +2401,17 @@ static void R_StudioDrawPoints( void )
 		}
 	}
 
+#if XASH_RAYTRACING
+	{
+		float scale = R_StudioViewmodelScale();
+		if( scale != 1.0f )
+		{
+			for( i = 0; i < m_pSubModel->numverts; i++ )
+				R_StudioScaleViewmodelPoint( g_studio.verts[i], scale );
+		}
+	}
+#endif
+
 	// generate shared normals for properly scaling glowing shell
 	if( RI.currententity->curstate.renderfx == kRenderFxGlowShell )
 	{
@@ -2914,6 +2955,7 @@ static void R_StudioClientEvents( void )
 	cl_entity_t	*e = RI.currententity;
 	int		i, sequence;
 	float		end, start;
+	qboolean wrapped = false;
 
 	if( g_studio.frametime == 0.0 )
 		return; // gamepaused
@@ -2925,6 +2967,16 @@ static void R_StudioClientEvents( void )
 		Matrix3x4_OriginFromMatrix( g_studio.rotationmatrix, e->attachment[1] );
 		Matrix3x4_OriginFromMatrix( g_studio.rotationmatrix, e->attachment[2] );
 		Matrix3x4_OriginFromMatrix( g_studio.rotationmatrix, e->attachment[3] );
+#if XASH_RAYTRACING
+		{
+			float scale = R_StudioViewmodelScale();
+			if( scale != 1.0f )
+			{
+				for( i = 0; i < 4; i++ )
+					R_StudioScaleViewmodelPoint( e->attachment[i], scale );
+			}
+		}
+#endif
 	}
 
 #if !XASH_RAYTRACING
@@ -3020,7 +3072,29 @@ static void R_StudioClientEvents( void )
 	start = end - e->curstate.framerate * gpGlobals->frametime * pseqdesc->fps;
 	pevent = (mstudioevent_t *)((byte *)m_pStudioHeader + pseqdesc->eventindex);
 
-	if( e->latched.sequencetime == e->curstate.animtime )
+	if( e == gEngfuncs.GetViewModel() )
+	{
+		static model_t *eventModel = NULL;
+		static int eventSequence = -1;
+		static float eventAnimtime = -1.0f, eventFrame = 0.0f;
+		static double eventTime = -1.0;
+		// sequencetime can equal animtime throughout a viewmodel sequence. Using
+		// that equality as "first frame" replays every past event on every draw.
+		if( eventModel != e->model || eventSequence != sequence ||
+			eventAnimtime != e->curstate.animtime || gpGlobals->time < eventTime )
+			start = -0.01f;
+		else
+		{
+			start = eventFrame;
+			wrapped = FBitSet( pseqdesc->flags, STUDIO_LOOPING ) && end < start;
+		}
+		eventModel = e->model;
+		eventSequence = sequence;
+		eventAnimtime = e->curstate.animtime;
+		eventFrame = end;
+		eventTime = gpGlobals->time;
+	}
+	else if( e->latched.sequencetime == e->curstate.animtime )
 	{
 		if( !FBitSet( pseqdesc->flags, STUDIO_LOOPING ))
 			start = -0.01f;
@@ -3032,7 +3106,8 @@ static void R_StudioClientEvents( void )
 		if( pevent[i].event < EVENT_CLIENT )
 			continue;
 
-		if( (float)pevent[i].frame > start && pevent[i].frame <= end )
+		if( wrapped ? ((float)pevent[i].frame > start || pevent[i].frame <= end) :
+			((float)pevent[i].frame > start && pevent[i].frame <= end) )
 			gEngfuncs.pfnStudioEvent( &pevent[i], e );
 	}
 }
@@ -4210,6 +4285,10 @@ Initialize client studio
 void CL_InitStudioAPI( void )
 {
 	pStudioDraw = &gStudioDraw;
+#if XASH_RAYTRACING
+	rt_viewmodel_reach = gEngfuncs.Cvar_Get( "rt_viewmodel_reach", "0.5", FCVAR_ARCHIVE,
+		"roster viewmodel animated forward reach in metres (0 disables, 0.05-2; never enlarges)" );
+#endif
 
 	// trying to grab them from client.dll
 	cl_righthand = gEngfuncs.pfnGetCvarPointer( "cl_righthand", 0 );

@@ -510,6 +510,12 @@ static const RgEditorCvarDescriptor rt_editor_base_cvars[] =
 	CVAR_FLOAT( "sv_stamina_sprint_cooldown", "Sprint restart cooldown", "Gameplay / Stamina", 0.35f, 0.0f, 5.0f, 0.05f, "%.2f s" ),
 	CVAR_FLOAT( "sv_stamina_jump_cost", "Jump cost", "Gameplay / Stamina", 200.0f, 0.0f, 10000.0f, 10.0f, "%.0f" ),
 	CVAR_FLOAT( "sv_stamina_underwater_seconds", "Full O2 duration", "Gameplay / Stamina", 12.0f, 0.1f, 120.0f, 0.5f, "%.1f s" ),
+	CVAR_INT( "sv_adrenaline_blue_intensity", "Blue heal effect intensity", "Gameplay / Items", 95, 0, 255 ),
+
+	CVAR_BOOL( "cl_recoil_enabled", "Recoil enabled", "Weapons / Global", 1.0f ),
+	CVAR_FLOAT( "cl_recoil_scale", "Recoil scale", "Weapons / Global", 1.0f, 0.0f, 4.0f, 0.01f, "%.2f x" ),
+	CVAR_FLOAT( "cl_recoil_attack_scale", "Recoil attack-time scale", "Weapons / Global", 1.0f, 0.0f, 4.0f, 0.01f, "%.2f x" ),
+	CVAR_FLOAT( "cl_recoil_return_scale", "Recoil return-rate scale", "Weapons / Global", 1.0f, 0.0f, 4.0f, 0.01f, "%.2f x" ),
 
 	CVAR_BOOL( "sv_hitscan_impact_delay", "Enabled", "Gameplay / Deferred Hitscan", 1.0f ),
 	CVAR_FLOAT( "sv_hitscan_impact_delay_min", "Minimum impact delay", "Gameplay / Deferred Hitscan", 0.02f, 0.0f, 0.25f, 0.001f, "%.3f s" ),
@@ -685,13 +691,18 @@ static const RgEditorCvarDescriptor rt_editor_base_cvars[] =
 	CVAR_BOOL( "killfx_distortion", "Distortion enabled", "Kill Effects", 1.0f ),
 };
 
-#define RT_EDITOR_MAX_CVARS 384
-#define RT_EDITOR_SPREAD_WEAPONS 10
+#define RT_EDITOR_MAX_CVARS 512
+#define RT_EDITOR_SPREAD_WEAPONS 11
 #define RT_EDITOR_SPREAD_FIELDS 10
+#define RT_EDITOR_RECOIL_WEAPONS 11
+#define RT_EDITOR_RECOIL_FIELDS 7
 static RgEditorCvarDescriptor rt_editor_cvars[RT_EDITOR_MAX_CVARS];
 static char rt_editor_spread_names[RT_EDITOR_SPREAD_WEAPONS][RT_EDITOR_SPREAD_FIELDS][64];
 static char rt_editor_spread_labels[RT_EDITOR_SPREAD_WEAPONS][RT_EDITOR_SPREAD_FIELDS][64];
 static char rt_editor_spread_categories[RT_EDITOR_SPREAD_WEAPONS][64];
+static char rt_editor_recoil_names[RT_EDITOR_RECOIL_WEAPONS][RT_EDITOR_RECOIL_FIELDS][64];
+static char rt_editor_recoil_labels[RT_EDITOR_RECOIL_WEAPONS][RT_EDITOR_RECOIL_FIELDS][64];
+static char rt_editor_recoil_categories[RT_EDITOR_RECOIL_WEAPONS][64];
 static uint32_t rt_editor_cvar_count;
 
 static RgBool32 RGCONV RT_EditorCvarGet( void *userdata, const char *name, float *value )
@@ -730,11 +741,11 @@ static void RGCONV RT_EditorCvarCommit( void *userdata )
 static void RT_EditorBuildCvarList( void )
 {
 	static const char *weaponNames[RT_EDITOR_SPREAD_WEAPONS] =
-		{ "glock", "python", "mp5", "crossbow", "shotgun",
-		  "ap9", "sniper", "tfcsniper", "taurus", "chaingun" };
+		{ "beretta", "deagle", "uzi", "fiveseven", "m4a1", "mossberg",
+		  "awp", "g3sg1", "scout", "tesla", "m60" };
 	static const char *weaponLabels[RT_EDITOR_SPREAD_WEAPONS] =
-		{ "Glock", "Python", "MP5", "Crossbow", "Shotgun",
-		  "AP9", "Sniper", "TFC Sniper", "Taurus", "Chaingun" };
+		{ "Beretta", "Deagle", "Uzi", "Fiveseven", "M4A1", "Mossberg",
+		  "AWP", "G3SG1", "Scout", "Tesla", "M60" };
 	static const char *suffixes[RT_EDITOR_SPREAD_FIELDS] =
 		{ "min", "max", "focus", "shot_add", "sprint_max_add_frac",
 		  "ads_min_add", "ads_max_add", "ads_focus_add", "ads_shot_add", "enabled" };
@@ -742,18 +753,33 @@ static void RT_EditorBuildCvarList( void )
 		{ "Minimum spread", "Maximum spread", "Focus rate", "Shot spread add",
 		  "Sprint max add fraction", "ADS minimum add", "ADS maximum add",
 		  "ADS focus add", "ADS shot add", "Enabled" };
-	static const float defaults[RT_EDITOR_SPREAD_WEAPONS][RT_EDITOR_SPREAD_FIELDS] =
+	static const float spreadDefaults[RT_EDITOR_SPREAD_FIELDS] =
+		{ .014f, .014f, .0f, .0f, .0f, .0f, .0f, .0f, .0f, 1.0f };
+	static const char *recoilWeaponNames[RT_EDITOR_RECOIL_WEAPONS] =
+		{ "beretta", "deagle", "uzi", "fiveseven", "m4a1", "mossberg",
+		  "awp", "g3sg1", "scout", "tesla", "m60" };
+	static const char *recoilWeaponLabels[RT_EDITOR_RECOIL_WEAPONS] =
+		{ "Beretta", "Deagle", "Uzi", "Fiveseven", "M4A1", "Mossberg",
+		  "AWP", "G3SG1", "Scout", "Tesla", "M60" };
+	static const char *recoilSuffixes[RT_EDITOR_RECOIL_FIELDS] =
+		{ "pitch", "pitch_rand", "yaw_min", "yaw_max", "attack", "return", "max" };
+	static const char *recoilLabels[RT_EDITOR_RECOIL_FIELDS] =
+		{ "Vertical kick", "Vertical randomness", "Minimum horizontal kick",
+		  "Maximum horizontal kick", "Kick attack time", "Return rate",
+		  "Maximum vertical recoil" };
+	static const float recoilDefaults[RT_EDITOR_RECOIL_WEAPONS][RT_EDITOR_RECOIL_FIELDS] =
 	{
-		{ .020f, .080f, .100f, .020f, .5f, -.010f, .0f, .0f, .015f, 1.0f },
-		{ .010f, .100f, .070f, .070f, .5f, -.010f, .0f, .060f, .0f, 1.0f },
-		{ .015f, .050f, .100f, .015f, .5f, -.005f, .0f, .0f, .0f, 1.0f },
-		{ .0f, .0f, .0f, .0f, .5f, .0f, .0f, .0f, .0f, 1.0f },
-		{ .050f, .150f, .100f, .100f, .5f, .0f, -.050f, .0f, -.030f, 1.0f },
-		{ .020f, .100f, .100f, .012f, .5f, -.010f, .0f, .0f, .003f, 1.0f },
-		{ .015f, .060f, .070f, .045f, .5f, -.015f, -.060f, 1.0f, -.045f, 1.0f },
-		{ .010f, .080f, .070f, .060f, .5f, -.010f, -.080f, 1.0f, -.060f, 1.0f },
-		{ .015f, .080f, .070f, .020f, .5f, -.010f, .0f, .030f, .015f, 1.0f },
-		{ .040f, .070f, .070f, .013f, .5f, .0f, .0f, .0f, .0f, 1.0f },
+		{ 1.00f, .10f, -.12f, .12f, .050f, 5.2f, 2.0f },
+		{ 4.00f, .15f, -.18f, .18f, .075f, 5.0f, 4.0f },
+		{ 1.20f, .20f, -.20f, .20f, .075f, 5.6f, 7.0f },
+		{ 1.10f, .12f, -.16f, .16f, .075f, 5.4f, 4.0f },
+		{ 1.00f, .20f, -.16f, .16f, .090f, 5.5f, 6.0f },
+		{ 3.00f, .20f, -.22f, .22f, .100f, 5.0f, 6.0f },
+		{ 1.50f, .10f, -.08f, .08f, .105f, 4.8f, 4.0f },
+		{ 3.00f, .10f, -.08f, .08f, .100f, 4.8f, 4.0f },
+		{ 1.50f, .10f, -.08f, .08f, .090f, 5.0f, 4.0f },
+		{ 1.00f, .10f, -.10f, .10f, .090f, 5.4f, 3.5f },
+		{ 1.00f, .04f, -.18f, .20f, .100f, 6.0f, 4.0f },
 	};
 	uint32_t i;
 	rt_editor_cvar_count = ARRAYSIZE( rt_editor_base_cvars );
@@ -763,7 +789,7 @@ static void RT_EditorBuildCvarList( void )
 	{
 		uint32_t field;
 		Q_snprintf( rt_editor_spread_categories[i], sizeof( rt_editor_spread_categories[i] ),
-			"Crosshair Spread / %s", weaponLabels[i] );
+			"Weapons / %s / Accuracy", weaponLabels[i] );
 		for( field = 0; field < RT_EDITOR_SPREAD_FIELDS &&
 			rt_editor_cvar_count < RT_EDITOR_MAX_CVARS; field++ )
 		{
@@ -778,11 +804,37 @@ static void RT_EditorBuildCvarList( void )
 			descriptor->pCategory = rt_editor_spread_categories[i];
 			descriptor->type = field == RT_EDITOR_SPREAD_FIELDS - 1
 				? RG_EDITOR_CVAR_BOOL : RG_EDITOR_CVAR_FLOAT;
-			descriptor->defaultValue = defaults[i][field];
+			descriptor->defaultValue = spreadDefaults[field];
 			descriptor->minimum = field >= 5 && field <= 8 ? -2.0f : 0.0f;
 			descriptor->maximum = field == 4 ? 4.0f : ( field == 9 ? 1.0f : 2.0f );
 			descriptor->step = field == 4 ? 0.01f : 0.001f;
 			descriptor->pFormat = field == 4 ? "%.2f" : "%.3f";
+		}
+	}
+
+	for( i = 0; i < RT_EDITOR_RECOIL_WEAPONS; i++ )
+	{
+		uint32_t field;
+		Q_snprintf( rt_editor_recoil_categories[i], sizeof( rt_editor_recoil_categories[i] ),
+			"Weapons / %s / Recoil", recoilWeaponLabels[i] );
+		for( field = 0; field < RT_EDITOR_RECOIL_FIELDS &&
+			rt_editor_cvar_count < RT_EDITOR_MAX_CVARS; field++ )
+		{
+			RgEditorCvarDescriptor *descriptor = &rt_editor_cvars[rt_editor_cvar_count++];
+			Q_snprintf( rt_editor_recoil_names[i][field],
+				sizeof( rt_editor_recoil_names[i][field] ),
+				"cl_recoil_%s_%s", recoilWeaponNames[i], recoilSuffixes[field] );
+			Q_strncpy( rt_editor_recoil_labels[i][field], recoilLabels[field],
+				sizeof( rt_editor_recoil_labels[i][field] ));
+			descriptor->pName = rt_editor_recoil_names[i][field];
+			descriptor->pLabel = rt_editor_recoil_labels[i][field];
+			descriptor->pCategory = rt_editor_recoil_categories[i];
+			descriptor->type = RG_EDITOR_CVAR_FLOAT;
+			descriptor->defaultValue = recoilDefaults[i][field];
+			descriptor->minimum = field == 2 || field == 3 ? -10.0f : 0.0f;
+			descriptor->maximum = field == 4 ? 1.0f : ( field == 1 ? 10.0f : 30.0f );
+			descriptor->step = field == 4 ? 0.005f : ( field <= 3 ? 0.01f : 0.1f );
+			descriptor->pFormat = field == 4 ? "%.3f s" : "%.2f";
 		}
 	}
 }

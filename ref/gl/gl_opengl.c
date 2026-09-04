@@ -2479,6 +2479,9 @@ static struct
 	int                       interaction_glow_tag;
 	float                     interaction_glow_distance_alpha;
 	float                     outline_view_projection[16];
+	float                     viewmodel_raster_view_projection[16];
+	RgViewport                viewmodel_raster_viewport;
+	qboolean                  viewmodel_raster_projection_valid;
 } rt_batch = { 0 };
 
 static qboolean AreTransformsAlwaysIdentity( rt_batchtype_t type )
@@ -2617,7 +2620,19 @@ static void FlushBatch()
 
         if( rt_batch.type != RT_BATCH_TYPE_2D )
         {
-            RgResult r = rgUploadMeshPrimitive( rg_instance, &rt_batch.mesh, &rt_batch.primitive );
+			RgResult r;
+			if( rt_batch.type == RT_BATCH_TYPE_RASTER &&
+				rt_batch.viewmodel_raster_projection_valid )
+			{
+				// Additive viewmodel cards need the authored 3D projection, but
+				// must be composited after the ray-traced first-person mesh. The
+				// world raster path has no first-person visibility/depth group.
+				r = rgUploadNonWorldPrimitive( rg_instance, &rt_batch.primitive,
+					rt_batch.viewmodel_raster_view_projection,
+					&rt_batch.viewmodel_raster_viewport );
+			}
+			else
+				r = rgUploadMeshPrimitive( rg_instance, &rt_batch.mesh, &rt_batch.primitive );
             RG_CHECK( r );
 
 			if( rt_batch.interaction_glow_tag &&
@@ -2743,8 +2758,11 @@ static void TryBeginBatch_Finalize( rt_batchtype_t             newtype,
 			rt_batch.primitive = newprimitive ? *newprimitive : null_prim;
 			rt_batch.interaction_glow_tag = 0;
 			rt_batch.interaction_glow_distance_alpha = 0.0f;
+			rt_batch.viewmodel_raster_projection_valid = false;
 			memset( rt_batch.outline_view_projection, 0,
 				sizeof( rt_batch.outline_view_projection ) );
+			memset( rt_batch.viewmodel_raster_view_projection, 0,
+				sizeof( rt_batch.viewmodel_raster_view_projection ) );
             {
                 const RgEditorInfo* src =
                     newprimitive && newprimitive->pEditorInfo ? newprimitive->pEditorInfo : NULL;
@@ -2802,6 +2820,25 @@ static void TryBeginBatch_Finalize( rt_batchtype_t             newtype,
 				}
 			}
 
+			if( rt_batch.type == RT_BATCH_TYPE_RASTER && newprimitive &&
+				( newprimitive->flags & RG_MESH_PRIMITIVE_FIRST_PERSON ) )
+			{
+				matrix4x4 viewProjection;
+				Matrix4x4_Copy( viewProjection, RI.worldviewProjectionMatrix );
+				// Convert the OpenGL projection to Vulkan clip space, matching
+				// the existing non-world interaction projection conversion.
+				for( int column = 0; column < 4; ++column )
+				{
+					viewProjection[1][column] = -viewProjection[1][column];
+					viewProjection[2][column] = 0.5f *
+						( viewProjection[2][column] + viewProjection[3][column] );
+				}
+				Matrix4x4_ToArrayFloatGL( viewProjection,
+					rt_batch.viewmodel_raster_view_projection );
+				rt_batch.viewmodel_raster_viewport = rt_2dstate.viewport;
+				rt_batch.viewmodel_raster_projection_valid = true;
+			}
+
 			if( rt_batch.type == RT_BATCH_TYPE_2D )
             {
                 rt_2dstate_onbatch = rt_2dstate;
@@ -2836,6 +2873,8 @@ static void TryBeginBatch( RgUtilImScratchTopology glbegin_topology )
     }
     else if( curtype == RT_BATCH_TYPE_RASTER )
     {
+		qboolean isviewmodel = RI.currententity &&
+			( RI.currententity == gEngfuncs.GetViewModel() );
         RgMeshInfo mesh = {
             .uniqueObjectID = UINT32_MAX,
             .pMeshName      = NULL,
@@ -2850,7 +2889,8 @@ static void TryBeginBatch( RgUtilImScratchTopology glbegin_topology )
             .primitiveIndexInMesh = 0,
             .flags                = ( rt_raster_blend ? RG_MESH_PRIMITIVE_TRANSLUCENT : 0 ) |
                      ( rt_alphatest ? RG_MESH_PRIMITIVE_ALPHA_TESTED : 0 ) |
-                     ( rt_state.curIsSky ? RG_MESH_PRIMITIVE_SKY : 0 ),
+					 ( rt_state.curIsSky ? RG_MESH_PRIMITIVE_SKY : 0 ) |
+					 ( isviewmodel ? RG_MESH_PRIMITIVE_FIRST_PERSON : 0 ),
             .pTextureName = GetCurrentTexture2DName(),
             .textureFrame = 0,
             .color        = rgUtilPackColorByte4D( 255, 255, 255, 255 ),
