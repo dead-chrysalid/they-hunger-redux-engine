@@ -23,6 +23,7 @@ GNU General Public License for more details.
 #include "studio.h"
 #include "wadfile.h"	// acess decal size
 #include "sound.h"
+#include "viewmodel_scale.h"
 
 /*
 ==============================================================
@@ -924,6 +925,21 @@ void GAME_EXPORT R_MuzzleFlash( const vec3_t pos, int type )
 	index = ( type % 10 ) % MAX_MUZZLEFLASH;
 	scale = ( type / 10 ) * 0.1f;
 	if( scale == 0.0f ) scale = 0.5f;
+	// Studio events pass the attachment pointer directly. Only first-person
+	// sprites inherit normalization; world and arbitrary temp flashes do not.
+	if( clgame.viewent.model )
+	{
+		int attachment;
+		for( attachment = 0; attachment < 4; attachment++ )
+		{
+			if( pos == clgame.viewent.attachment[attachment] )
+			{
+				scale *= SH_ViewmodelScaleForReach( clgame.viewent.model->name,
+					Cvar_VariableValue( "rt_viewmodel_reach" ));
+				break;
+			}
+		}
+	}
 
 	if( !cl_sprite_muzzleflash[index] )
 		return;
@@ -935,7 +951,9 @@ void GAME_EXPORT R_MuzzleFlash( const vec3_t pos, int type )
 	pTemp->entity.curstate.renderamt = 255;
 	pTemp->entity.curstate.framerate = 10;
 	pTemp->entity.curstate.renderfx = 0;
-	pTemp->die = cl.time + 0.01; // die at next frame
+	// Already submitted below for this frame. Do not submit a second flash at
+	// last frame's muzzle position through the temp-entity update on high FPS.
+	pTemp->die = cl.time;
 	pTemp->entity.curstate.frame = COM_RandomLong( 0, pTemp->frameMax );
 	pTemp->flags |= FTENT_SPRANIMATE|FTENT_SPRANIMATELOOP;
 	pTemp->entity.curstate.scale = scale;

@@ -352,7 +352,9 @@ static float R_GetFarClip( void )
 #if XASH_RAYTRACING
 static float R_GetNearClip( void )
 {
-	return 4.0f;
+	// This also sets the primary ray's minimum distance, not just raster depth.
+	// The old 4 units (10 cm) cut through camera-normalized ADS viewmodels.
+	return 0.1f; // 2.5 mm at the RT world scale
 }
 #endif
 
