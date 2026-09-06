@@ -501,16 +501,16 @@ static const RgEditorCvarDescriptor rt_editor_base_cvars[] =
 
 	CVAR_BOOL( "sv_stamina_enabled", "Enabled", "Gameplay / Stamina", 1.0f ),
 	CVAR_INT( "sv_stamina_max", "Maximum stamina", "Gameplay / Stamina", 1000, 1, 10000 ),
-	CVAR_FLOAT( "sv_stamina_regen_rate", "Regeneration rate", "Gameplay / Stamina", 100.0f, 0.0f, 5000.0f, 1.0f, "%.0f / s" ),
+	CVAR_FLOAT( "sv_stamina_regen_rate", "Regeneration rate", "Gameplay / Stamina", 300.0f, 0.0f, 5000.0f, 1.0f, "%.0f / s" ),
 	CVAR_FLOAT( "sv_stamina_regen_delay", "Regeneration delay", "Gameplay / Stamina", 0.7f, 0.0f, 30.0f, 0.05f, "%.2f s" ),
-	CVAR_FLOAT( "sv_stamina_depleted_regen_delay", "Depleted regeneration delay", "Gameplay / Stamina", 2.0f, 0.0f, 30.0f, 0.05f, "%.2f s" ),
-	CVAR_FLOAT( "sv_stamina_sprint_drain_rate", "Sprint drain rate", "Gameplay / Stamina", 60.0f, 0.0f, 5000.0f, 1.0f, "%.0f / s" ),
-	CVAR_FLOAT( "sv_stamina_sprint_min_speed", "Sprint drain minimum speed", "Gameplay / Stamina", 120.0f, 0.0f, 1000.0f, 5.0f, "%.0f u/s" ),
+	CVAR_FLOAT( "sv_stamina_depleted_regen_delay", "Depleted regeneration delay", "Gameplay / Stamina", 2.2f, 0.0f, 30.0f, 0.05f, "%.2f s" ),
+	CVAR_FLOAT( "sv_stamina_sprint_drain_rate", "Sprint drain rate", "Gameplay / Stamina", 200.0f, 0.0f, 5000.0f, 1.0f, "%.0f / s" ),
+	CVAR_FLOAT( "sv_stamina_sprint_min_speed", "Sprint drain minimum speed", "Gameplay / Stamina", 200.0f, 0.0f, 1000.0f, 5.0f, "%.0f u/s" ),
 	CVAR_FLOAT( "sv_stamina_sprint_resume_fraction", "Exhausted sprint recovery fraction", "Gameplay / Stamina", 0.03f, 0.0f, 1.0f, 0.01f, "%.2f" ),
 	CVAR_FLOAT( "sv_stamina_sprint_cooldown", "Sprint restart cooldown", "Gameplay / Stamina", 0.35f, 0.0f, 5.0f, 0.05f, "%.2f s" ),
 	CVAR_FLOAT( "sv_stamina_jump_cost", "Jump cost", "Gameplay / Stamina", 200.0f, 0.0f, 10000.0f, 10.0f, "%.0f" ),
-	CVAR_FLOAT( "sv_stamina_underwater_seconds", "Full O2 duration", "Gameplay / Stamina", 12.0f, 0.1f, 120.0f, 0.5f, "%.1f s" ),
-	CVAR_INT( "sv_adrenaline_blue_intensity", "Blue heal effect intensity", "Gameplay / Items", 95, 0, 255 ),
+	CVAR_FLOAT( "sv_stamina_underwater_seconds", "Full O2 duration", "Gameplay / Stamina", 30.0f, 0.1f, 120.0f, 0.5f, "%.1f s" ),
+	CVAR_INT( "sv_adrenaline_blue_intensity", "Blue heal effect intensity", "Gameplay / Items", 15, 0, 255 ),
 
 	CVAR_BOOL( "cl_recoil_enabled", "Recoil enabled", "Weapons / Global", 1.0f ),
 	CVAR_FLOAT( "cl_recoil_scale", "Recoil scale", "Weapons / Global", 1.0f, 0.0f, 4.0f, 0.01f, "%.2f x" ),
@@ -530,7 +530,7 @@ static const RgEditorCvarDescriptor rt_editor_base_cvars[] =
 
 	CVAR_BOOL( "sv_interact_enabled", "Enabled", "Gameplay / Interaction", 1.0f ),
 	CVAR_BOOL( "sv_interact_pickups_require_use", "Pickups require interact", "Gameplay / Interaction", 1.0f ),
-	CVAR_FLOAT( "sv_interact_outline_full_opacity_radius", "Item full-opacity distance", "Gameplay / Interaction", 200.0f, 0.0f, 2048.0f, 4.0f, "%.0f u" ),
+	CVAR_FLOAT( "sv_interact_outline_full_opacity_radius", "Item full-opacity distance", "Gameplay / Interaction", 240.0f, 0.0f, 2048.0f, 4.0f, "%.0f u" ),
 	CVAR_FLOAT( "sv_interact_outline_radius", "Item zero-opacity distance", "Gameplay / Interaction", 240.0f, 0.0f, 2048.0f, 4.0f, "%.0f u" ),
 	CVAR_FLOAT( "sv_interact_use_range", "Interaction range", "Gameplay / Interaction", 96.0f, 16.0f, 512.0f, 2.0f, "%.0f u" ),
 	CVAR_FLOAT( "sv_interact_aim_dot", "Selection aim threshold", "Gameplay / Interaction", 0.55f, -1.0f, 1.0f, 0.01f, "%.2f" ),
@@ -677,7 +677,7 @@ static const RgEditorCvarDescriptor rt_editor_base_cvars[] =
 	CVAR_FLOAT( "hit_markers_fade_out_time", "Fade-out time", "Hitmarkers", 0.28f, 0.0f, 2.0f, 0.005f, "%.3f s" ),
 
 	CVAR_BOOL( "killfx_enable", "Enabled", "Kill Effects", 1.0f ),
-	CVAR_BOOL( "killfx_human_head_gibs", "Flying human skulls on headshots", "Kill Effects", 1.0f ),
+	CVAR_BOOL( "killfx_human_head_gibs", "Flying human skulls on headshots", "Kill Effects", 0.0f ),
 	CVAR_BOOL( "killfx_sound", "Sound enabled", "Kill Effects", 1.0f ),
 	CVAR_FLOAT( "killfx_sound_volume", "Sound volume", "Kill Effects", 1.0f, 0.0f, 4.0f, 0.01f, "%.2f" ),
 	CVAR_FLOAT( "killfx_sound_boost", "Sound boost", "Kill Effects", 3.2f, 0.0f, 8.0f, 0.05f, "%.2f" ),
@@ -753,8 +753,20 @@ static void RT_EditorBuildCvarList( void )
 		{ "Minimum spread", "Maximum spread", "Focus rate", "Shot spread add",
 		  "Sprint max add fraction", "ADS minimum add", "ADS maximum add",
 		  "ADS focus add", "ADS shot add", "Enabled" };
-	static const float spreadDefaults[RT_EDITOR_SPREAD_FIELDS] =
-		{ .014f, .014f, .0f, .0f, .0f, .0f, .0f, .0f, .0f, 1.0f };
+	static const float spreadDefaults[RT_EDITOR_SPREAD_WEAPONS][RT_EDITOR_SPREAD_FIELDS] =
+	{
+		{ .010f, .010f, .0f, .0f, .0f,  .0f,   .0f,  .0f, .0f, 1.0f },
+		{ .010f, .010f, .0f, .0f, .0f, -.010f, -.010f, 1.0f, .0f, 1.0f },
+		{ .010f, .010f, .0f, .0f, .0f, -.010f, -.010f, 1.0f, .0f, 1.0f },
+		{ .010f, .010f, .0f, .0f, .0f, -.010f, -.010f, 1.0f, .0f, 1.0f },
+		{ .010f, .010f, .0f, .0f, .0f, -.010f, -.010f, 1.0f, .0f, 1.0f },
+		{ .014f, .014f, .0f, .0f, .0f,  .0f,   .0f,  .0f, .0f, 1.0f },
+		{ .010f, .010f, .0f, .0f, .0f, -.010f, -.010f, 1.0f, .0f, 1.0f },
+		{ .010f, .010f, .0f, .0f, .0f, -.010f, -.010f, 1.0f, .0f, 1.0f },
+		{ .0f,   .0f,   .0f, .0f, .0f,  .0f,   .0f,  .0f, .0f, 1.0f },
+		{ .0f,   .0f,   .0f, .0f, .0f,  .0f,   .0f,  .0f, .0f, 1.0f },
+		{ .010f, .010f, .0f, .0f, .0f, -.010f, -.010f, 1.0f, .0f, 1.0f },
+	};
 	static const char *recoilWeaponNames[RT_EDITOR_RECOIL_WEAPONS] =
 		{ "beretta", "deagle", "uzi", "fiveseven", "m4a1", "mossberg",
 		  "awp", "g3sg1", "scout", "tesla", "m60" };
@@ -769,17 +781,17 @@ static void RT_EditorBuildCvarList( void )
 		  "Maximum vertical recoil" };
 	static const float recoilDefaults[RT_EDITOR_RECOIL_WEAPONS][RT_EDITOR_RECOIL_FIELDS] =
 	{
-		{ 1.00f, .10f, -.12f, .12f, .050f, 5.2f, 2.0f },
+		{ 0.60f, .10f, -.12f, .12f, .050f, 5.2f, 2.0f },
 		{ 4.00f, .15f, -.18f, .18f, .075f, 5.0f, 4.0f },
-		{ 1.20f, .20f, -.20f, .20f, .075f, 5.6f, 7.0f },
-		{ 1.10f, .12f, -.16f, .16f, .075f, 5.4f, 4.0f },
-		{ 1.00f, .20f, -.16f, .16f, .090f, 5.5f, 6.0f },
+		{ 0.50f, .10f, -.16f, .16f, .040f, 5.5f, 6.0f },
+		{ 0.80f, .20f, -.20f, .20f, .075f, 5.6f, 7.0f },
+		{ 0.65f, .15f, -.16f, .16f, .075f, 5.4f, 4.0f },
 		{ 3.00f, .20f, -.22f, .22f, .100f, 5.0f, 6.0f },
-		{ 1.50f, .10f, -.08f, .08f, .105f, 4.8f, 4.0f },
-		{ 3.00f, .10f, -.08f, .08f, .100f, 4.8f, 4.0f },
+		{ 4.00f, .10f, -.08f, .08f, .105f, 4.8f, 4.0f },
+		{ 1.00f, .10f, -.08f, .08f, .065f, 4.8f, 4.0f },
 		{ 1.50f, .10f, -.08f, .08f, .090f, 5.0f, 4.0f },
 		{ 1.00f, .10f, -.10f, .10f, .090f, 5.4f, 3.5f },
-		{ 1.00f, .04f, -.18f, .20f, .100f, 6.0f, 4.0f },
+		{ 0.80f, .04f, -.18f, .20f, .080f, 6.0f, 4.0f },
 	};
 	uint32_t i;
 	rt_editor_cvar_count = ARRAYSIZE( rt_editor_base_cvars );
@@ -804,7 +816,7 @@ static void RT_EditorBuildCvarList( void )
 			descriptor->pCategory = rt_editor_spread_categories[i];
 			descriptor->type = field == RT_EDITOR_SPREAD_FIELDS - 1
 				? RG_EDITOR_CVAR_BOOL : RG_EDITOR_CVAR_FLOAT;
-			descriptor->defaultValue = spreadDefaults[field];
+			descriptor->defaultValue = spreadDefaults[i][field];
 			descriptor->minimum = field >= 5 && field <= 8 ? -2.0f : 0.0f;
 			descriptor->maximum = field == 4 ? 4.0f : ( field == 9 ? 1.0f : 2.0f );
 			descriptor->step = field == 4 ? 0.01f : 0.001f;
