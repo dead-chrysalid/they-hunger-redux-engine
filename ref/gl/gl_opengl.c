@@ -2869,7 +2869,15 @@ static void TryBeginBatch_Finalize( rt_batchtype_t             newtype,
 				}
 				Matrix4x4_ToArrayFloatGL( viewProjection,
 					rt_batch.menu_preview_view_projection );
-				rt_batch.menu_preview_viewport = rt_2dstate.viewport;
+				// RI viewport uses the menu's top-left origin. pglViewport stores the
+				// OpenGL bottom-left conversion, which vertically swaps card rows when
+				// passed through to Vulkan unchanged.
+				rt_batch.menu_preview_viewport.x = ( float )RI.viewport[0];
+				rt_batch.menu_preview_viewport.y = ( float )RI.viewport[1];
+				rt_batch.menu_preview_viewport.width = ( float )RI.viewport[2];
+				rt_batch.menu_preview_viewport.height = ( float )RI.viewport[3];
+				rt_batch.menu_preview_viewport.minDepth = rt_2dstate.viewport.minDepth;
+				rt_batch.menu_preview_viewport.maxDepth = rt_2dstate.viewport.maxDepth;
 				rt_batch.menu_preview_projection_valid = true;
 			}
 
@@ -2925,7 +2933,8 @@ static void TryBeginBatch( RgUtilImScratchTopology glbegin_topology )
                      ( rt_alphatest ? RG_MESH_PRIMITIVE_ALPHA_TESTED : 0 ) |
 					 ( rt_state.curIsSky ? RG_MESH_PRIMITIVE_SKY : 0 ) |
 					 ( isviewmodel ? RG_MESH_PRIMITIVE_FIRST_PERSON : 0 ) |
-					 ( !RI.drawWorld ? RG_MESH_PRIMITIVE_UI_OVERLAY : 0 ),
+					 ( !RI.drawWorld ?
+						RG_MESH_PRIMITIVE_UI_OVERLAY | RG_MESH_PRIMITIVE_UI_3D : 0 ),
             .pTextureName = GetCurrentTexture2DName(),
             .textureFrame = 0,
             .color        = rgUtilPackColorByte4D( 255, 255, 255, 255 ),
@@ -2988,7 +2997,8 @@ static void TryBeginBatch( RgUtilImScratchTopology glbegin_topology )
                 ( rt_alphatest ? RG_MESH_PRIMITIVE_ALPHA_TESTED : 0 ) |
                 ( isviewmodel ? RG_MESH_PRIMITIVE_FIRST_PERSON
                               : ( isplayerviewer ? RG_MESH_PRIMITIVE_FIRST_PERSON_VIEWER : 0 ) ) |
-				( !RI.drawWorld ? RG_MESH_PRIMITIVE_UI_OVERLAY : 0 ),
+				( !RI.drawWorld ?
+					RG_MESH_PRIMITIVE_UI_OVERLAY | RG_MESH_PRIMITIVE_UI_3D : 0 ),
             .pTextureName = rt_state.curTexture2DName,
             .textureFrame = 0,
             .color        = rgUtilPackColorByte4D( 255, 255, 255, ishologram ? alpha : 255 ),
