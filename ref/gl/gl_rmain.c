@@ -1803,11 +1803,13 @@ void R_EndFrame( void )
             RT_CVAR_TO_BOOL( rt_ef_crt ) || RT_CVAR_TO_INT32( rt_ef_vintage ) == RT_VINTAGE_CRT,
     };
 
+	const float chromatic_aberration_intensity = Q_max(
+		RT_CVAR_TO_FLOAT( rt_ef_chraber ), RT_CVAR_TO_FLOAT( _rt_stealth_chraber ) );
     RgPostEffectChromaticAberration chromatic_aberration_effect = {
-        .isActive              = RT_CVAR_TO_FLOAT( rt_ef_chraber ) > 0.0f,
-        .transitionDurationIn  = 0,
-        .transitionDurationOut = 0,
-        .intensity             = RT_CVAR_TO_FLOAT( rt_ef_chraber ),
+		.isActive              = chromatic_aberration_intensity > 0.0f,
+		.transitionDurationIn  = 0,
+		.transitionDurationOut = 0,
+		.intensity             = chromatic_aberration_intensity,
     };
 
 	RgPostEffectRadialBlur menu_blur_effect = {

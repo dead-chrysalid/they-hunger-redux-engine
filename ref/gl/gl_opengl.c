@@ -1105,6 +1105,7 @@ void GL_InitCommands( void )
 	
 	CVAR_DEF_T( rt_ef_crt,					"0",	"CRT-monitor filter" )
 	CVAR_DEF_T( rt_ef_chraber,				"0.1",	"chromatic aberration intensity" )
+	CVAR_DEF_T( _rt_stealth_chraber,		"0",	"internal knife stealth chromatic aberration intensity" )
 	CVAR_DEF_T( rt_ef_vintage,				"0",	"[0, 4] vintage effects, disabled if rt_renderscale>0" )
 	CVAR_DEF_T( rt_ef_water,				"1",	"warp screen while under water" )
 	CVAR_DEF_T( _rt_menu_blur,				"0",	"internal menu background blur" )

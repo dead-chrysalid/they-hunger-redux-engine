@@ -949,6 +949,7 @@ typedef struct rt_cvars_t
 		
 		rt_ef_crt,
 		rt_ef_chraber,
+		_rt_stealth_chraber,
 		rt_ef_vintage,
 		rt_ef_water,
 		_rt_menu_blur,
