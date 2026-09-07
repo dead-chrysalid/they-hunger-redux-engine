@@ -434,6 +434,9 @@ static const RgEditorCvarDescriptor rt_editor_base_cvars[] =
 	CVAR_INT( "hud_v7_status_item_count_x", "Syringe count X", "HUD v7 / Status Item", 244, -256, 1024 ),
 	CVAR_INT( "hud_v7_status_item_count_y", "Syringe count Y", "HUD v7 / Status Item", 72, -256, 512 ),
 	CVAR_INT( "hud_v7_status_item_count_font_size", "Syringe count font size", "HUD v7 / Status Item", 22, 14, 64 ),
+	CVAR_INT( "hud_v7_status_ability_icon_x", "Ability icon X", "HUD v7 / Weapon Ability", 218, -256, 1024 ),
+	CVAR_INT( "hud_v7_status_ability_icon_y", "Ability icon Y", "HUD v7 / Weapon Ability", 42, -256, 512 ),
+	CVAR_FLOAT( "hud_v7_status_ability_icon_scale", "Ability icon scale", "HUD v7 / Weapon Ability", 0.55f, 0.01f, 4.0f, 0.01f, "%.2f" ),
 
 	CVAR_INT( "hud_v7_weapon_x", "Screen X", "HUD v7 / Weapon Menu", 28, 0, 1024 ),
 	CVAR_INT( "hud_v7_weapon_y", "Screen Y", "HUD v7 / Weapon Menu", 103, 0, 1024 ),
