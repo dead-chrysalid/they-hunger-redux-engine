@@ -1973,11 +1973,18 @@ Sorting opaque entities by model type
 */
 static int R_StudioMeshCompare( const void *a, const void *b )
 {
-	if( FBitSet( ((const sortedmesh_t*)a)->flags, STUDIO_NF_ADDITIVE ))
-		return 1;
+	const sortedmesh_t *meshA = (const sortedmesh_t *)a;
+	const sortedmesh_t *meshB = (const sortedmesh_t *)b;
+	const qboolean additiveA = FBitSet( meshA->flags, STUDIO_NF_ADDITIVE );
+	const qboolean additiveB = FBitSet( meshB->flags, STUDIO_NF_ADDITIVE );
+	const qboolean maskedA = FBitSet( meshA->flags, STUDIO_NF_MASKED );
+	const qboolean maskedB = FBitSet( meshB->flags, STUDIO_NF_MASKED );
 
-	if( FBitSet( ((const sortedmesh_t*)a)->flags, STUDIO_NF_MASKED ))
-		return -1;
+	if( additiveA != additiveB )
+		return additiveA ? 1 : -1;
+
+	if( maskedA != maskedB )
+		return maskedA ? -1 : 1;
 
 	return 0;
 }
@@ -2435,6 +2442,10 @@ static void R_StudioDrawPoints( void )
     }
 #endif
 
+	qboolean teslaViewmodel = RI.currententity == gEngfuncs.GetViewModel() &&
+		RI.currententity->model &&
+		!Q_stricmp( RI.currententity->model->name, "models/weapons/view/v_tesla.mdl" );
+
 	for( j = k = 0; j < m_pSubModel->nummesh; j++ )
 	{
 		g_nFaceFlags = ptexture[pskinref[pmesh[j].skinref]].flags | g_nForceFaceFlags;
@@ -2459,18 +2470,28 @@ static void R_StudioDrawPoints( void )
 		{
 			for( i = 0; i < pmesh[j].numnorms; i++, k++, pstudionorms++, pnormbone++ )
 			{
-				if( FBitSet( m_pStudioHeader->flags, STUDIO_HAS_BONEWEIGHTS ))
-					R_StudioLighting( &lv_tmp, -1, g_nFaceFlags, g_studio.norms[k] );
-				else R_StudioLighting( &lv_tmp, *pnormbone, g_nFaceFlags, (float *)pstudionorms );
-
 				if( FBitSet( g_nFaceFlags, STUDIO_NF_CHROME ))
 					R_StudioSetupChrome( g_studio.chrome[k], *pnormbone, (float *)pstudionorms );
-				VectorScale( g_studio.lightcolor, lv_tmp, g_studio.lightvalues[k] );
+
+				// Additive studio layers are authored as self-lit effects. Bypass both
+				// scalar shading and the sampled model-light color; either one can turn
+				// the Tesla's glow meshes black in a dark scene.
+				if( teslaViewmodel && FBitSet( g_nFaceFlags, STUDIO_NF_ADDITIVE ))
+				{
+					VectorSet( g_studio.lightvalues[k], 1.0f, 1.0f, 1.0f );
+				}
+				else
+				{
+					if( FBitSet( m_pStudioHeader->flags, STUDIO_HAS_BONEWEIGHTS ))
+						R_StudioLighting( &lv_tmp, -1, g_nFaceFlags, g_studio.norms[k] );
+					else R_StudioLighting( &lv_tmp, *pnormbone, g_nFaceFlags, (float *)pstudionorms );
+					VectorScale( g_studio.lightcolor, lv_tmp, g_studio.lightvalues[k] );
+				}
 			}
 		}
 	}
 
-	if( r_studio_sort_textures->value && need_sort )
+	if( ( r_studio_sort_textures->value || teslaViewmodel ) && need_sort )
 	{
 		// resort opaque and translucent meshes draw order
 		qsort( g_studio.meshes, m_pSubModel->nummesh, sizeof( sortedmesh_t ), R_StudioMeshCompare );
@@ -2532,10 +2553,10 @@ static void R_StudioDrawPoints( void )
         rt_state.curStudioMesh     = j;
         rt_state.curStudioGlend    = 0;
 
-		// Additive studio textures are authored as effect cards. Submit those
-		// meshes through the same raster-effects path used by sprites, particles,
-		// and beams so their crossed planes blend as a glow instead of becoming
-		// translucent ray-traced geometry. Ordinary studio meshes stay unchanged.
+		// Keep the Tesla's opaque shell in the normal studio path so it receives
+		// ray-traced lighting. FlushBatch mirrors that shell into the private
+		// viewmodel raster depth buffer without drawing its color; only the authored
+		// additive effect cards are composited there.
 		rt_state.curIsRasterized = oldRasterized ||
 			( FBitSet( g_nFaceFlags, STUDIO_NF_ADDITIVE ) &&
 			  !FBitSet( g_nFaceFlags, STUDIO_NF_MASKED ));
@@ -2956,6 +2977,8 @@ static void R_StudioClientEvents( void )
 	int		i, sequence;
 	float		end, start;
 	qboolean wrapped = false;
+	qboolean teslaMuzzle = e == gEngfuncs.GetViewModel() && e->model &&
+		!Q_stricmp( e->model->name, "models/weapons/view/v_tesla.mdl" );
 
 	if( g_studio.frametime == 0.0 )
 		return; // gamepaused
@@ -2992,9 +3015,9 @@ static void R_StudioClientEvents( void )
 #if !XASH_RAYTRACING
         VectorCopy( e->attachment[0], el->origin );
 		el->die = gpGlobals->time + 0.05f;
-		el->color.r = 255;
-		el->color.g = 192;
-		el->color.b = 64;
+		el->color.r = teslaMuzzle ? 64 : 255;
+		el->color.g = teslaMuzzle ? 160 : 192;
+		el->color.b = teslaMuzzle ? 255 : 64;
 		el->decay = 320;
 		el->radius = 24;
 #else
@@ -3004,9 +3027,9 @@ static void R_StudioClientEvents( void )
 
         VectorCopy( original_pos, el->origin );
         el->die = gpGlobals->time + RT_CVAR_TO_FLOAT( rt_mzlflash_life );
-        el->color.r = 255;
-        el->color.g = 192;
-        el->color.b = 64;
+		el->color.r = teslaMuzzle ? 64 : 255;
+		el->color.g = teslaMuzzle ? 160 : 192;
+		el->color.b = teslaMuzzle ? 255 : 64;
         el->decay  = 320 * RT_CVAR_TO_FLOAT( rt_mzlflash_decay );
         el->radius  = ( 24 + 24 * gEngfuncs.COM_RandomFloat( 0.0f, 1.0f ) *
                                RT_CVAR_TO_FLOAT( rt_mzlflash_size ) ) *

@@ -1106,6 +1106,7 @@ void GL_InitCommands( void )
 	CVAR_DEF_T( rt_ef_crt,					"0",	"CRT-monitor filter" )
 	CVAR_DEF_T( rt_ef_chraber,				"0.1",	"chromatic aberration intensity" )
 	CVAR_DEF_T( _rt_stealth_chraber,		"0",	"internal knife stealth chromatic aberration intensity" )
+	CVAR_DEF_T( _rt_vision_selective,		"0",	"internal stealth and sight selective-color state" )
 	CVAR_DEF_T( rt_ef_vintage,				"0",	"[0, 4] vintage effects, disabled if rt_renderscale>0" )
 	CVAR_DEF_T( rt_ef_water,				"1",	"warp screen while under water" )
 	CVAR_DEF_T( _rt_menu_blur,				"0",	"internal menu background blur" )
@@ -2637,9 +2638,9 @@ static void FlushBatch()
 			else if( rt_batch.type == RT_BATCH_TYPE_RASTER &&
 				rt_batch.viewmodel_raster_projection_valid )
 			{
-				// Additive viewmodel cards need the authored 3D projection, but
-				// must be composited after the ray-traced first-person mesh. The
-				// world raster path has no first-person visibility/depth group.
+				// A composite viewmodel needs one private, depth-aware raster target.
+				// Comparing its authored projection against ray-traced world depth uses
+				// incompatible depth spaces and rejects embedded effect cards.
 				r = rgUploadNonWorldPrimitive( rg_instance, &rt_batch.primitive,
 					rt_batch.viewmodel_raster_view_projection,
 					&rt_batch.viewmodel_raster_viewport );
@@ -2647,6 +2648,27 @@ static void FlushBatch()
 			else
 				r = rgUploadMeshPrimitive( rg_instance, &rt_batch.mesh, &rt_batch.primitive );
             RG_CHECK( r );
+
+			// Tesla's opaque shell remains ray traced, but its embedded additive cards
+			// live in a private viewmodel raster target. Mirror the shell as depth-only
+			// geometry into that target so the cards are hidden by the gun without
+			// replacing the ray-traced, normally lit shell color.
+			if( rt_batch.type == RT_BATCH_TYPE_STUDIO &&
+				rt_batch.viewmodel_raster_projection_valid &&
+				rt_batch.mesh.pMeshName &&
+				!Q_stricmp( rt_batch.mesh.pMeshName, "models/weapons/view/v_tesla.mdl" ) )
+			{
+				RgMeshPrimitiveInfo depthOnly = rt_batch.primitive;
+				depthOnly.flags |= RG_MESH_PRIMITIVE_FIRST_PERSON |
+					RG_MESH_PRIMITIVE_UI_3D |
+					RG_MESH_PRIMITIVE_RASTER_DEPTH_ONLY;
+				depthOnly.emissive = 0.0f;
+				depthOnly.pEditorInfo = NULL;
+				RgResult depthResult = rgUploadNonWorldPrimitive( rg_instance,
+					&depthOnly, rt_batch.viewmodel_raster_view_projection,
+					&rt_batch.viewmodel_raster_viewport );
+				RG_CHECK( depthResult );
+			}
 
 			if( rt_batch.interaction_glow_tag &&
 				rt_batch.interaction_glow_distance_alpha > 0.0f &&
@@ -2836,7 +2858,8 @@ static void TryBeginBatch_Finalize( rt_batchtype_t             newtype,
 				}
 			}
 
-			if( rt_batch.type == RT_BATCH_TYPE_RASTER && newprimitive &&
+			if( ( rt_batch.type == RT_BATCH_TYPE_RASTER ||
+				rt_batch.type == RT_BATCH_TYPE_STUDIO ) && newprimitive &&
 				( newprimitive->flags & RG_MESH_PRIMITIVE_FIRST_PERSON ) )
 			{
 				matrix4x4 viewProjection;
@@ -2917,6 +2940,8 @@ static void TryBeginBatch( RgUtilImScratchTopology glbegin_topology )
     {
 		qboolean isviewmodel = RI.currententity &&
 			( RI.currententity == gEngfuncs.GetViewModel() );
+		qboolean isTeslaViewmodel = isviewmodel && RI.currententity->model &&
+			!Q_stricmp( RI.currententity->model->name, "models/weapons/view/v_tesla.mdl" );
         RgMeshInfo mesh = {
             .uniqueObjectID = UINT32_MAX,
             .pMeshName      = NULL,
@@ -2933,6 +2958,9 @@ static void TryBeginBatch( RgUtilImScratchTopology glbegin_topology )
                      ( rt_alphatest ? RG_MESH_PRIMITIVE_ALPHA_TESTED : 0 ) |
 					 ( rt_state.curIsSky ? RG_MESH_PRIMITIVE_SKY : 0 ) |
 					 ( isviewmodel ? RG_MESH_PRIMITIVE_FIRST_PERSON : 0 ) |
+					 ( isviewmodel ? RG_MESH_PRIMITIVE_UI_3D : 0 ) |
+					 ( isTeslaViewmodel && rt_raster_blend && rt_raster_additive
+						? RG_MESH_PRIMITIVE_DEPTH_PULL_FORWARD : 0 ) |
 					 ( !RI.drawWorld ?
 						RG_MESH_PRIMITIVE_UI_OVERLAY | RG_MESH_PRIMITIVE_UI_3D : 0 ),
             .pTextureName = GetCurrentTexture2DName(),
