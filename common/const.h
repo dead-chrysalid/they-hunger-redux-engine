@@ -566,6 +566,11 @@
 // coord (origin)
 // coord (velocity)
 // coord (velocity)
+
+#define TE_TESLAGUNSHOTDECAL	128	// Tesla decal and blue impact presentation
+// coord, coord, coord (position)
+// short (entity index)
+// byte (decal index)
 // coord (velocity)
 // byte ( life * 10 )
 // byte ( color ) this is an index into an array of color vectors in the engine. (0 - )

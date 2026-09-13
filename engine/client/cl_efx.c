@@ -1757,6 +1757,50 @@ void GAME_EXPORT R_BulletImpactParticles( const vec3_t pos )
 	}
 }
 
+void R_TeslaImpactParticles( const vec3_t pos )
+{
+	int i, quantity;
+	float dist, radius, lifetime;
+	vec3_t dir;
+	particle_t *p;
+	dlight_t *dl;
+
+	if( bullet_impact_flash->value != 0.0f )
+	{
+		radius = bound( 1.0f, bullet_impact_flash_radius->value, 512.0f );
+		lifetime = bound( 0.005f, bullet_impact_flash_lifetime->value, 1.0f );
+		dl = CL_AllocDlight( 0 );
+		if( dl )
+		{
+			VectorCopy( pos, dl->origin );
+			dl->radius = radius;
+			dl->color.r = 64;
+			dl->color.g = 160;
+			dl->color.b = 255;
+			dl->intensity = bound( 0.0f, bullet_impact_flash_intensity->value, 16.0f );
+			dl->die = cl.time + lifetime;
+			dl->decay = radius / lifetime;
+		}
+	}
+
+	VectorSubtract( pos, refState.vieworg, dir );
+	dist = bound( 0.0f, VectorLength( dir ), 1000.0f );
+	quantity = (int)(( 1000.0f - dist ) / 100.0f );
+	if( quantity == 0 ) quantity = 1;
+	for( i = 0; i < quantity * 2; ++i )
+	{
+		p = R_AllocParticle( NULL );
+		if( !p ) return;
+		VectorCopy( pos, p->org );
+		p->vel[0] = COM_RandomFloat( -100.0f, 100.0f );
+		p->vel[1] = COM_RandomFloat( -100.0f, 100.0f );
+		p->vel[2] = COM_RandomFloat( -100.0f, 100.0f );
+		p->die = cl.time + 0.35f;
+		p->color = R_LookupColor( 64, 160, 255 );
+		p->type = pt_grav;
+	}
+}
+
 /*
 ===============
 R_FlickerParticles

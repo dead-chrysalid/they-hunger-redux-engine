@@ -2489,6 +2489,16 @@ void CL_ParseTempEntity( sizebuf_t *msg )
 		scale = (float)(MSG_ReadByte( &buf ) * 0.1f);
 		R_UserTracerParticle( pos, pos2, life, color, scale, 0, NULL );
 		break;
+	case TE_TESLAGUNSHOTDECAL:
+		pos[0] = MSG_ReadCoord( &buf );
+		pos[1] = MSG_ReadCoord( &buf );
+		pos[2] = MSG_ReadCoord( &buf );
+		entityIndex = MSG_ReadShort( &buf );
+		decalIndex = MSG_ReadByte( &buf );
+		if( decalIndex != 255 )
+			CL_DecalShoot( CL_DecalIndex( decalIndex ), entityIndex, 0, pos, 0 );
+		R_TeslaImpactParticles( pos );
+		break;
 	default:
 		Con_DPrintf( S_ERROR "ParseTempEntity: illegible TE message %i\n", type );
 		break;

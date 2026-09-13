@@ -1105,6 +1105,8 @@ void GL_InitCommands( void )
 	
 	CVAR_DEF_T( rt_ef_crt,					"0",	"CRT-monitor filter" )
 	CVAR_DEF_T( rt_ef_chraber,				"0.1",	"chromatic aberration intensity" )
+	CVAR_DEF_T( _rt_stealth_chraber,		"0",	"internal knife stealth chromatic aberration intensity" )
+	CVAR_DEF_T( _rt_vision_selective,		"0",	"internal stealth and sight selective-color state" )
 	CVAR_DEF_T( rt_ef_vintage,				"0",	"[0, 4] vintage effects, disabled if rt_renderscale>0" )
 	CVAR_DEF_T( rt_ef_water,				"1",	"warp screen while under water" )
 	CVAR_DEF_T( _rt_menu_blur,				"0",	"internal menu background blur" )
@@ -2482,6 +2484,9 @@ static struct
 	float                     viewmodel_raster_view_projection[16];
 	RgViewport                viewmodel_raster_viewport;
 	qboolean                  viewmodel_raster_projection_valid;
+	float                     menu_preview_view_projection[16];
+	RgViewport                menu_preview_viewport;
+	qboolean                  menu_preview_projection_valid;
 } rt_batch = { 0 };
 
 static qboolean AreTransformsAlwaysIdentity( rt_batchtype_t type )
@@ -2621,12 +2626,21 @@ static void FlushBatch()
         if( rt_batch.type != RT_BATCH_TYPE_2D )
         {
 			RgResult r;
-			if( rt_batch.type == RT_BATCH_TYPE_RASTER &&
+			if( rt_batch.menu_preview_projection_valid )
+			{
+				// MainUI model previews are authored as small, independent 3D
+				// scenes. Keep their viewport and submit them in the UI overlay
+				// layer so they are neither fullscreen nor caught by menu blur.
+				r = rgUploadNonWorldPrimitive( rg_instance, &rt_batch.primitive,
+					rt_batch.menu_preview_view_projection,
+					&rt_batch.menu_preview_viewport );
+			}
+			else if( rt_batch.type == RT_BATCH_TYPE_RASTER &&
 				rt_batch.viewmodel_raster_projection_valid )
 			{
-				// Additive viewmodel cards need the authored 3D projection, but
-				// must be composited after the ray-traced first-person mesh. The
-				// world raster path has no first-person visibility/depth group.
+				// A composite viewmodel needs one private, depth-aware raster target.
+				// Comparing its authored projection against ray-traced world depth uses
+				// incompatible depth spaces and rejects embedded effect cards.
 				r = rgUploadNonWorldPrimitive( rg_instance, &rt_batch.primitive,
 					rt_batch.viewmodel_raster_view_projection,
 					&rt_batch.viewmodel_raster_viewport );
@@ -2634,6 +2648,27 @@ static void FlushBatch()
 			else
 				r = rgUploadMeshPrimitive( rg_instance, &rt_batch.mesh, &rt_batch.primitive );
             RG_CHECK( r );
+
+			// Tesla's opaque shell remains ray traced, but its embedded additive cards
+			// live in a private viewmodel raster target. Mirror the shell as depth-only
+			// geometry into that target so the cards are hidden by the gun without
+			// replacing the ray-traced, normally lit shell color.
+			if( rt_batch.type == RT_BATCH_TYPE_STUDIO &&
+				rt_batch.viewmodel_raster_projection_valid &&
+				rt_batch.mesh.pMeshName &&
+				!Q_stricmp( rt_batch.mesh.pMeshName, "models/weapons/view/v_tesla.mdl" ) )
+			{
+				RgMeshPrimitiveInfo depthOnly = rt_batch.primitive;
+				depthOnly.flags |= RG_MESH_PRIMITIVE_FIRST_PERSON |
+					RG_MESH_PRIMITIVE_UI_3D |
+					RG_MESH_PRIMITIVE_RASTER_DEPTH_ONLY;
+				depthOnly.emissive = 0.0f;
+				depthOnly.pEditorInfo = NULL;
+				RgResult depthResult = rgUploadNonWorldPrimitive( rg_instance,
+					&depthOnly, rt_batch.viewmodel_raster_view_projection,
+					&rt_batch.viewmodel_raster_viewport );
+				RG_CHECK( depthResult );
+			}
 
 			if( rt_batch.interaction_glow_tag &&
 				rt_batch.interaction_glow_distance_alpha > 0.0f &&
@@ -2759,10 +2794,13 @@ static void TryBeginBatch_Finalize( rt_batchtype_t             newtype,
 			rt_batch.interaction_glow_tag = 0;
 			rt_batch.interaction_glow_distance_alpha = 0.0f;
 			rt_batch.viewmodel_raster_projection_valid = false;
+			rt_batch.menu_preview_projection_valid = false;
 			memset( rt_batch.outline_view_projection, 0,
 				sizeof( rt_batch.outline_view_projection ) );
 			memset( rt_batch.viewmodel_raster_view_projection, 0,
 				sizeof( rt_batch.viewmodel_raster_view_projection ) );
+			memset( rt_batch.menu_preview_view_projection, 0,
+				sizeof( rt_batch.menu_preview_view_projection ) );
             {
                 const RgEditorInfo* src =
                     newprimitive && newprimitive->pEditorInfo ? newprimitive->pEditorInfo : NULL;
@@ -2820,7 +2858,8 @@ static void TryBeginBatch_Finalize( rt_batchtype_t             newtype,
 				}
 			}
 
-			if( rt_batch.type == RT_BATCH_TYPE_RASTER && newprimitive &&
+			if( ( rt_batch.type == RT_BATCH_TYPE_RASTER ||
+				rt_batch.type == RT_BATCH_TYPE_STUDIO ) && newprimitive &&
 				( newprimitive->flags & RG_MESH_PRIMITIVE_FIRST_PERSON ) )
 			{
 				matrix4x4 viewProjection;
@@ -2837,6 +2876,32 @@ static void TryBeginBatch_Finalize( rt_batchtype_t             newtype,
 					rt_batch.viewmodel_raster_view_projection );
 				rt_batch.viewmodel_raster_viewport = rt_2dstate.viewport;
 				rt_batch.viewmodel_raster_projection_valid = true;
+			}
+
+			if( !RI.drawWorld &&
+				( rt_batch.type == RT_BATCH_TYPE_STUDIO ||
+					rt_batch.type == RT_BATCH_TYPE_RASTER ) )
+			{
+				matrix4x4 viewProjection;
+				Matrix4x4_Copy( viewProjection, RI.worldviewProjectionMatrix );
+				for( int column = 0; column < 4; ++column )
+				{
+					viewProjection[1][column] = -viewProjection[1][column];
+					viewProjection[2][column] = 0.5f *
+						( viewProjection[2][column] + viewProjection[3][column] );
+				}
+				Matrix4x4_ToArrayFloatGL( viewProjection,
+					rt_batch.menu_preview_view_projection );
+				// RI viewport uses the menu's top-left origin. pglViewport stores the
+				// OpenGL bottom-left conversion, which vertically swaps card rows when
+				// passed through to Vulkan unchanged.
+				rt_batch.menu_preview_viewport.x = ( float )RI.viewport[0];
+				rt_batch.menu_preview_viewport.y = ( float )RI.viewport[1];
+				rt_batch.menu_preview_viewport.width = ( float )RI.viewport[2];
+				rt_batch.menu_preview_viewport.height = ( float )RI.viewport[3];
+				rt_batch.menu_preview_viewport.minDepth = rt_2dstate.viewport.minDepth;
+				rt_batch.menu_preview_viewport.maxDepth = rt_2dstate.viewport.maxDepth;
+				rt_batch.menu_preview_projection_valid = true;
 			}
 
 			if( rt_batch.type == RT_BATCH_TYPE_2D )
@@ -2875,6 +2940,8 @@ static void TryBeginBatch( RgUtilImScratchTopology glbegin_topology )
     {
 		qboolean isviewmodel = RI.currententity &&
 			( RI.currententity == gEngfuncs.GetViewModel() );
+		qboolean isTeslaViewmodel = isviewmodel && RI.currententity->model &&
+			!Q_stricmp( RI.currententity->model->name, "models/weapons/view/v_tesla.mdl" );
         RgMeshInfo mesh = {
             .uniqueObjectID = UINT32_MAX,
             .pMeshName      = NULL,
@@ -2887,10 +2954,15 @@ static void TryBeginBatch( RgUtilImScratchTopology glbegin_topology )
         RgMeshPrimitiveInfo prim = {
             .pPrimitiveNameInMesh = NULL,
             .primitiveIndexInMesh = 0,
-            .flags                = ( rt_raster_blend ? RG_MESH_PRIMITIVE_TRANSLUCENT : 0 ) |
+			.flags                = ( rt_raster_blend ? RG_MESH_PRIMITIVE_TRANSLUCENT : 0 ) |
                      ( rt_alphatest ? RG_MESH_PRIMITIVE_ALPHA_TESTED : 0 ) |
 					 ( rt_state.curIsSky ? RG_MESH_PRIMITIVE_SKY : 0 ) |
-					 ( isviewmodel ? RG_MESH_PRIMITIVE_FIRST_PERSON : 0 ),
+					 ( isviewmodel ? RG_MESH_PRIMITIVE_FIRST_PERSON : 0 ) |
+					 ( isviewmodel ? RG_MESH_PRIMITIVE_UI_3D : 0 ) |
+					 ( isTeslaViewmodel && rt_raster_blend && rt_raster_additive
+						? RG_MESH_PRIMITIVE_DEPTH_PULL_FORWARD : 0 ) |
+					 ( !RI.drawWorld ?
+						RG_MESH_PRIMITIVE_UI_OVERLAY | RG_MESH_PRIMITIVE_UI_3D : 0 ),
             .pTextureName = GetCurrentTexture2DName(),
             .textureFrame = 0,
             .color        = rgUtilPackColorByte4D( 255, 255, 255, 255 ),
@@ -2952,7 +3024,9 @@ static void TryBeginBatch( RgUtilImScratchTopology glbegin_topology )
                            : 0 ) |
                 ( rt_alphatest ? RG_MESH_PRIMITIVE_ALPHA_TESTED : 0 ) |
                 ( isviewmodel ? RG_MESH_PRIMITIVE_FIRST_PERSON
-                              : ( isplayerviewer ? RG_MESH_PRIMITIVE_FIRST_PERSON_VIEWER : 0 ) ),
+                              : ( isplayerviewer ? RG_MESH_PRIMITIVE_FIRST_PERSON_VIEWER : 0 ) ) |
+				( !RI.drawWorld ?
+					RG_MESH_PRIMITIVE_UI_OVERLAY | RG_MESH_PRIMITIVE_UI_3D : 0 ),
             .pTextureName = rt_state.curTexture2DName,
             .textureFrame = 0,
             .color        = rgUtilPackColorByte4D( 255, 255, 255, ishologram ? alpha : 255 ),

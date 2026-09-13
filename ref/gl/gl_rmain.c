@@ -24,6 +24,7 @@ GNU General Public License for more details.
 
 float		gldepthmin, gldepthmax;
 ref_instance_t	RI;
+static ref_instance_t r_scene_instances[MAX_DRAW_STACK];
 
 static int R_RankForRenderMode( int rendermode )
 {
@@ -189,9 +190,16 @@ R_PushScene
 */
 void R_PushScene( void )
 {
-	if( ++tr.draw_stack_pos >= MAX_DRAW_STACK )
+	if( tr.draw_stack_pos + 1 >= MAX_DRAW_STACK )
+	{
 		gEngfuncs.Host_Error( "draw stack overflow\n" );
+		return;
+	}
 
+	// Menu model previews change RI too. EndFrame still needs the world camera,
+	// sky and clipping state when it submits the accumulated ray-traced scene.
+	r_scene_instances[tr.draw_stack_pos] = RI;
+	++tr.draw_stack_pos;
 	tr.draw_list = &tr.draw_stack[tr.draw_stack_pos];
 }
 
@@ -202,8 +210,13 @@ R_PopScene
 */
 void R_PopScene( void )
 {
-	if( --tr.draw_stack_pos < 0 )
+	if( tr.draw_stack_pos <= 0 )
+	{
 		gEngfuncs.Host_Error( "draw stack underflow\n" );
+		return;
+	}
+	--tr.draw_stack_pos;
+	RI = r_scene_instances[tr.draw_stack_pos];
 	tr.draw_list = &tr.draw_stack[tr.draw_stack_pos];
 }
 
@@ -1803,17 +1816,26 @@ void R_EndFrame( void )
             RT_CVAR_TO_BOOL( rt_ef_crt ) || RT_CVAR_TO_INT32( rt_ef_vintage ) == RT_VINTAGE_CRT,
     };
 
+	const float chromatic_aberration_intensity = Q_max(
+		RT_CVAR_TO_FLOAT( rt_ef_chraber ), RT_CVAR_TO_FLOAT( _rt_stealth_chraber ) );
     RgPostEffectChromaticAberration chromatic_aberration_effect = {
-        .isActive              = RT_CVAR_TO_FLOAT( rt_ef_chraber ) > 0.0f,
-        .transitionDurationIn  = 0,
-        .transitionDurationOut = 0,
-        .intensity             = RT_CVAR_TO_FLOAT( rt_ef_chraber ),
+		.isActive              = chromatic_aberration_intensity > 0.0f,
+		.transitionDurationIn  = 0,
+		.transitionDurationOut = 0,
+		.intensity             = chromatic_aberration_intensity,
     };
 
 	RgPostEffectRadialBlur menu_blur_effect = {
 		.isActive = RT_CVAR_TO_BOOL( _rt_menu_blur ),
 		.transitionDurationIn = 0.18f,
 		.transitionDurationOut = 0.18f,
+	};
+
+	RgPostEffectInverseBlackAndWhite vision_selective_effect = {
+		.isActive = RT_CVAR_TO_BOOL( _rt_vision_selective ),
+		.transitionDurationIn = 0.35f,
+		.transitionDurationOut = 0.5f,
+		.preserveRed = true,
 	};
 
     RgPostEffectWaves waves_effect = {
@@ -1868,6 +1890,7 @@ void R_EndFrame( void )
 		.sType                = RG_STRUCTURE_TYPE_POSTEFFECTS,
 		.pNext                = &interaction_outline_params,
         .pChromaticAberration = &chromatic_aberration_effect,
+		.pInverseBlackAndWhite = &vision_selective_effect,
 		.pRadialBlur           = &menu_blur_effect,
 		.pColorTint            = &killfx_lens,
         .pTeleport            = RT_IsPortalPosteffectActive() ? &teleport_effect : NULL,
