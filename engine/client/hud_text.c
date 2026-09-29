@@ -518,6 +518,8 @@ static qboolean CL_HudTextLoadFont( hud_text_font_t *font )
 void CL_HudTextVidInit( void )
 {
 	int i;
+	double started = Sys_DoubleTime();
+	double prewarmStarted;
 
 	CL_HudTextClearGlyphs();
 	CL_HudTextFreeFonts();
@@ -540,6 +542,7 @@ void CL_HudTextVidInit( void )
 			hudTextFonts[i].backend == HUD_TEXT_BACKEND_WIN32_GDI ? "Win32 GDI hinting" : "stb_truetype" );
 	}
 
+	prewarmStarted = Sys_DoubleTime();
 	hudTextReady = false;
 	for( i = HUD_TEXT_STYLE_SMALL; i <= HUD_TEXT_STYLE_DISPLAY; i++ )
 	{
@@ -554,6 +557,8 @@ void CL_HudTextVidInit( void )
 		}
 		hudTextReady = true;
 	}
+	Con_Reportf( "Startup timing: HUD fonts %.3f sec, atlas prewarm %.3f sec\n",
+		prewarmStarted - started, Sys_DoubleTime() - prewarmStarted );
 }
 
 void CL_HudTextShutdown( void )

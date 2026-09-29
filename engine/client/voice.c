@@ -373,6 +373,8 @@ Voice_RecordStart
 void Voice_RecordStart( void )
 {
 	Voice_RecordStop();
+	if( !voice_enable.value || !voice.initialized || !voice.encoder )
+		return;
 
 	if( voice_inputfromfile.value )
 	{
@@ -394,7 +396,15 @@ void Voice_RecordStart( void )
 	}
 
 	if( !Voice_IsRecording() )
+	{
 		voice.is_recording = VoiceCapture_Activate( true );
+		// Open the microphone only when the player actually requests recording.
+		// This also permits retrying after a microphone is plugged in.
+		if( !voice.is_recording && VoiceCapture_Init() )
+			voice.is_recording = VoiceCapture_Activate( true );
+		if( !voice.is_recording )
+			Con_Printf( S_WARN "No microphone is available.\n" );
+	}
 
 	if( Voice_IsRecording() )
 		Voice_Status( VOICE_LOCALCLIENT_INDEX, true );
@@ -541,8 +551,8 @@ static void Voice_Shutdown( void )
 	int i;
 
 	Voice_RecordStop();
-	Voice_ShutdownOpusEncoder();
 	Voice_ShutdownOpusDecoder();
+	Voice_ShutdownOpusEncoder(); // also frees the mode shared by both codecs
 	VoiceCapture_Shutdown();
 
 	if( voice.local.talking_ack )
@@ -599,9 +609,11 @@ qboolean Voice_Init( const char *pszCodecName, int quality )
 		return false;
 	}
 
-	// reinitialize only if codec parameters are different
-	if( Q_strcmp( voice.codec, pszCodecName ) && voice.quality != quality )
-		Voice_Shutdown();
+	// Repeated map signons with the same codec must not leak codec instances
+	// or reopen the capture device. Either changed parameter requires a reset.
+	if( voice.initialized && voice.encoder && !Q_strcmp( voice.codec, pszCodecName ) && voice.quality == quality )
+		return true;
+	Voice_Shutdown();
 
 	voice.autogain.block_size = 128;
 
@@ -625,9 +637,6 @@ qboolean Voice_Init( const char *pszCodecName, int quality )
 	}
 
 	voice.quality = quality;
-
-	if( !VoiceCapture_Init( ))
-		Con_Printf( S_WARN "No microphone is available.\n" );
 
 	return true;
 }

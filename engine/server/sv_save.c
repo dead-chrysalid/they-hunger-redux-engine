@@ -905,7 +905,7 @@ fill the save resore buffer
 parse hash strings
 =============
 */
-static SAVERESTOREDATA *LoadSaveData( const char *level )
+static SAVERESTOREDATA *LoadSaveData( const char *level, qboolean allowMissing )
 {
 	int		tokenSize, tableCount;
 	int		size, tokenCount;
@@ -917,13 +917,16 @@ static SAVERESTOREDATA *LoadSaveData( const char *level )
 	file_t		*pFile;
 
 	Q_snprintf( name, sizeof( name ), DEFAULT_SAVE_DIRECTORY "%s.HL1", level );
-	Con_Printf( "Loading game from %s...\n", name );
-
 	if(( pFile = FS_Open( name, "rb", true )) == NULL )
 	{
+		// Unvisited transition neighbours have no saved state. An existing but
+		// unreadable file, or an explicit save load, must still report an error.
+		if( allowMissing && !FS_FileExists( name, true ))
+			return NULL;
 		Con_Printf( S_ERROR "Couldn't open save data file %s.\n", name );
 		return NULL;
 	}
+	Con_Printf( "Loading game from %s...\n", name );
 
 	// Read the header
 	FS_Read( pFile, &id, sizeof( int ));
@@ -1122,7 +1125,7 @@ static void RestoreDecal( SAVERESTOREDATA *pSaveData, decallist_t *entry, qboole
 		vec3_t	testspot, testend;
 		trace_t	tr;
 
-		Con_Printf( S_ERROR "RestoreDecal: couldn't restore entity index %i\n", entry->entityIndex );
+		Con_Reportf( "RestoreDecal: tracing adjacent decal from entity %i onto destination geometry\n", entry->entityIndex );
 
 		VectorCopy( entry->position, testspot );
 		VectorMA( testspot, 5.0f, entry->impactPlaneNormal, testspot );
@@ -1627,7 +1630,7 @@ static int LoadGameState( char const *level, qboolean changelevel )
 	edict_t		*pent;
 	int		i;
 
-	pSaveData = LoadSaveData( level );
+	pSaveData = LoadSaveData( level, changelevel );
 	if( !pSaveData ) return 0; // couldn't load the file
 
 	ParseSaveTables( pSaveData, &header, true );
@@ -1949,7 +1952,8 @@ static void LoadAdjacentEnts( const char *pOldLevel, const char *pLandmarkName )
 		// map was already in the list
 		if( test < i ) continue;
 
-		pSaveData = LoadSaveData( currentLevelData.levelList[i].mapName );
+		pSaveData = LoadSaveData( currentLevelData.levelList[i].mapName,
+			Q_stricmp( currentLevelData.levelList[i].mapName, pOldLevel ) != 0 );
 
 		if( pSaveData )
 		{

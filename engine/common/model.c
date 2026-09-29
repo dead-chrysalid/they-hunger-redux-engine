@@ -256,6 +256,7 @@ model_t *Mod_LoadModel( model_t *mod, qboolean crash )
 	qboolean		loaded;
 	byte		*buf;
 	model_info_t	*p;
+	double		started, readFinished;
 
 	ASSERT( mod != NULL );
 
@@ -272,7 +273,9 @@ model_t *Mod_LoadModel( model_t *mod, qboolean crash )
 	Q_strncpy( tempname, mod->name, sizeof( tempname ));
 	COM_FixSlashes( tempname );
 
+	started = Sys_DoubleTime();
 	buf = FS_LoadFile( tempname, &length, false );
+	readFinished = Sys_DoubleTime();
 
 	if( !buf )
 	{
@@ -370,6 +373,8 @@ model_t *Mod_LoadModel( model_t *mod, qboolean crash )
 	}
 	Mem_Free( buf );
 
+	Con_Reportf( "Model timing: %s read %.3f sec, prepare %.3f sec, %u bytes\n",
+		tempname, readFinished - started, Sys_DoubleTime() - readFinished, (unsigned)length );
 	return mod;
 }
 

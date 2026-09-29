@@ -470,6 +470,7 @@ static const RgEditorCvarDescriptor rt_editor_base_cvars[] =
 	CVAR_INT( "hud_message_accent_red", "Accent red", "HUD / Screen Titles", 205, 0, 255 ),
 	CVAR_INT( "hud_message_accent_green", "Accent green", "HUD / Screen Titles", 34, 0, 255 ),
 	CVAR_INT( "hud_message_accent_blue", "Accent blue", "HUD / Screen Titles", 45, 0, 255 ),
+	CVAR_INT( "hud_message_accent_alpha", "Accent bar opacity", "HUD / Screen Titles", 235, 0, 255 ),
 	CVAR_BOOL( "hud_message_glitch", "Entry and exit color split", "HUD / Screen Titles", 1.0f ),
 	CVAR_INT( "hud_message_y_offset", "Vertical offset", "HUD / Screen Titles", -28, -1024, 1024 ),
 
