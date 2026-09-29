@@ -5195,7 +5195,7 @@ qboolean SV_LoadProgs( const char *name )
 
 	if( !SV_InitPhysicsAPI( ))
 	{
-		Con_DPrintf( "SV_LoadProgs: optional physics API is not exported\n" );
+		Con_Reportf( "SV_LoadProgs: optional physics API is not exported\n" );
 	}
 
 	// grab function SV_SaveGameComment
