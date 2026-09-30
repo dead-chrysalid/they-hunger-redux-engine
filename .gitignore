@@ -343,3 +343,5 @@ enc_temp_folder/
 
 tools/*
 *.png
+
+/tests/build/

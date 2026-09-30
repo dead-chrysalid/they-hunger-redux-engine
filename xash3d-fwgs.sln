@@ -24,12 +24,18 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "xash3d", "game_launch\xash3
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "opus", "3rdparty\opus\opus.vcxproj", "{B53752FC-C3D9-437C-B4FF-4F0F1274DA98}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ragdoll_physics_tests", "tests\ragdoll_physics_tests.vcxproj", "{E03E65C7-E654-4EB1-A8C8-008A5BDF73EB}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
 		Release|x64 = Release|x64
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{E03E65C7-E654-4EB1-A8C8-008A5BDF73EB}.Release|x64.ActiveCfg = Release|x64
+		{E03E65C7-E654-4EB1-A8C8-008A5BDF73EB}.Release|x64.Build.0 = Release|x64
+		{E03E65C7-E654-4EB1-A8C8-008A5BDF73EB}.Debug|x64.ActiveCfg = Debug|x64
+		{E03E65C7-E654-4EB1-A8C8-008A5BDF73EB}.Debug|x64.Build.0 = Debug|x64
 		{FADFD7BE-F4AC-4685-BD71-6A6128987DA4}.Debug|x64.ActiveCfg = Debug|x64
 		{FADFD7BE-F4AC-4685-BD71-6A6128987DA4}.Debug|x64.Build.0 = Debug|x64
 		{FADFD7BE-F4AC-4685-BD71-6A6128987DA4}.Release|x64.ActiveCfg = Release|x64

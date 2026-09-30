@@ -22,6 +22,7 @@ GNU General Public License for more details.
 #include "pm_local.h"
 #include "pmtrace.h"
 #include "viewmodel_scale.h"
+#include "gl_ragdoll.h"
 
 #define EVENT_CLIENT	5000	// less than this value it's a server-side studio events
 #define MAX_LOCALLIGHTS	4
@@ -244,6 +245,17 @@ static qboolean R_StudioComputeBBox( vec3_t bbox[8] )
 
 	if( !m_pStudioHeader )
 		return false;
+
+	if( R_RagdollBounds( e, studio_mins, studio_maxs ))
+	{
+		if( bbox ) for( i = 0; i < 8; ++i )
+		{
+			bbox[i][0] = ( i & 1 ) ? studio_mins[0] : studio_maxs[0];
+			bbox[i][1] = ( i & 2 ) ? studio_mins[1] : studio_maxs[1];
+			bbox[i][2] = ( i & 4 ) ? studio_mins[2] : studio_maxs[2];
+		}
+		return bbox || !R_CullModel( e, studio_mins, studio_maxs );
+	}
 
 	// check if we have valid mins\maxs
 	if( !VectorCompare( vec3_origin, RI.currentmodel->mins ))
@@ -1109,7 +1121,11 @@ static void R_StudioSaveBones( void )
 {
 	mstudiobone_t	*pbones;
 	int		i;
+	vec3_t ragdollMins, ragdollMaxs;
 
+	R_RagdollBones( RI.currententity, m_pStudioHeader, g_studio.bonestransform );
+	if( R_RagdollBounds( RI.currententity, ragdollMins, ragdollMaxs ))
+		memcpy( g_studio.lighttransform, g_studio.bonestransform, m_pStudioHeader->numbones * sizeof(matrix3x4) );
 	pbones = (mstudiobone_t *)((byte *)m_pStudioHeader + m_pStudioHeader->boneindex);
 	g_studio.cached_numbones = m_pStudioHeader->numbones;
 

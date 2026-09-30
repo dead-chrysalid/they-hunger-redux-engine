@@ -45,12 +45,12 @@
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
-      <PreprocessorDefinitions>HAVE_STDINT_H=1;STDINT_H="stdint.h";XASH_GAMEDIR="valve";HAVE_TGMATH_H=1;_CRT_SILENCE_NONCONFORMING_TGMATH_H=1;HAVE_MALLOC_H=1;ALLOCA_H="malloc.h";XASH_BUILD_COMMIT="c1ca2c1-dirty";XASH_LOW_MEMORY=0;REF_DLL=1;XASH_RAYTRACING=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>BT_USE_SSE_IN_API;HAVE_STDINT_H=1;STDINT_H="stdint.h";XASH_GAMEDIR="valve";HAVE_TGMATH_H=1;_CRT_SILENCE_NONCONFORMING_TGMATH_H=1;HAVE_MALLOC_H=1;ALLOCA_H="malloc.h";XASH_BUILD_COMMIT="c1ca2c1-dirty";XASH_LOW_MEMORY=0;REF_DLL=1;XASH_RAYTRACING=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader>
       </PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
       <DebugInformationFormat>EditAndContinue</DebugInformationFormat>
-      <AdditionalIncludeDirectories>.;..\..\bin\engine;..\..\engine;..\..\bin\engine\common;..\..\engine\common;..\..\bin\engine\common\imagelib;..\..\engine\common\imagelib;..\..\bin\filesystem;..\..\filesystem;..\..\bin\public;..\..\public;..\..\bin\common;..\..\common;..\..\bin\pm_shared;..\..\pm_shared;$(RTGL1_SDK_PATH)\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\..\3rdparty\bullet\src;.;..\..\bin\engine;..\..\engine;..\..\bin\engine\common;..\..\engine\common;..\..\bin\engine\common\imagelib;..\..\engine\common\imagelib;..\..\bin\filesystem;..\..\filesystem;..\..\bin\public;..\..\public;..\..\bin\common;..\..\common;..\..\bin\pm_shared;..\..\pm_shared;$(RTGL1_SDK_PATH)\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <Optimization>Disabled</Optimization>
     </ClCompile>
     <Link>
@@ -65,11 +65,11 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
-      <PreprocessorDefinitions>HAVE_STDINT_H=1;STDINT_H="stdint.h";XASH_GAMEDIR="valve";HAVE_TGMATH_H=1;_CRT_SILENCE_NONCONFORMING_TGMATH_H=1;HAVE_MALLOC_H=1;ALLOCA_H="malloc.h";XASH_BUILD_COMMIT="c1ca2c1-dirty";XASH_LOW_MEMORY=0;REF_DLL=1;XASH_RAYTRACING=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>BT_USE_SSE_IN_API;HAVE_STDINT_H=1;STDINT_H="stdint.h";XASH_GAMEDIR="valve";HAVE_TGMATH_H=1;_CRT_SILENCE_NONCONFORMING_TGMATH_H=1;HAVE_MALLOC_H=1;ALLOCA_H="malloc.h";XASH_BUILD_COMMIT="c1ca2c1-dirty";XASH_LOW_MEMORY=0;REF_DLL=1;XASH_RAYTRACING=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader>
       </PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
-      <AdditionalIncludeDirectories>.;..\..\bin\engine;..\..\engine;..\..\bin\engine\common;..\..\engine\common;..\..\bin\engine\common\imagelib;..\..\engine\common\imagelib;..\..\bin\filesystem;..\..\filesystem;..\..\bin\public;..\..\public;..\..\bin\common;..\..\common;..\..\bin\pm_shared;..\..\pm_shared;$(RTGL1_SDK_PATH)\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\..\3rdparty\bullet\src;.;..\..\bin\engine;..\..\engine;..\..\bin\engine\common;..\..\engine\common;..\..\bin\engine\common\imagelib;..\..\engine\common\imagelib;..\..\bin\filesystem;..\..\filesystem;..\..\bin\public;..\..\public;..\..\bin\common;..\..\common;..\..\bin\pm_shared;..\..\pm_shared;$(RTGL1_SDK_PATH)\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <WholeProgramOptimization>true</WholeProgramOptimization>
     </ClCompile>
     <Link>
@@ -206,6 +206,11 @@
     <ClCompile Include="gl_rsurf.c" />
     <ClCompile Include="gl_sprite.c" />
     <ClCompile Include="gl_studio.c" />
+    <ClCompile Include="gl_ragdoll.c" />
+    <ClCompile Include="ragdoll_physics.cpp" />
+    <ClCompile Include="..\..\3rdparty\bullet\src\btBulletCollisionAll.cpp" />
+    <ClCompile Include="..\..\3rdparty\bullet\src\btBulletDynamicsAll.cpp" />
+    <ClCompile Include="..\..\3rdparty\bullet\src\btLinearMathAll.cpp" />
     <ClCompile Include="gl_triapi.c" />
     <ClCompile Include="gl_vgui.c" />
     <ClCompile Include="gl_warp.c" />

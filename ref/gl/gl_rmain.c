@@ -14,6 +14,7 @@ GNU General Public License for more details.
 */
 
 #include "gl_local.h"
+#include "gl_ragdoll.h"
 #include "xash3d_mathlib.h"
 #include "library.h"
 #include "beamdef.h"
@@ -1419,6 +1420,7 @@ void R_RenderFrame( const ref_viewpass_t *rvp )
 
 	// setup the initial render params
 	R_SetupRefParams( rvp );
+	R_RagdollFrame();
 
 	if( gl_finish->value && RI.drawWorld )
 		pglFinish();
