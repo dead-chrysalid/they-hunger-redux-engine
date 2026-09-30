@@ -4,6 +4,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+#include "../../common/ragdoll_bridge.h"
 #define RD_MAX_BONES 128
 #define RD_MAX_BODIES 64
 #define RD_MAX_CORPSES 64
@@ -16,6 +17,22 @@ typedef struct {
     int bone, group;
     float mins[3], maxs[3];
 } rd_hitbox;
+/* Portable state, indexed by studio bone; no Bullet pointer/ABI serialization. */
+typedef struct {
+    int count, frozen;
+    rd_matrix initial[RD_MAX_BONES], pose[RD_MAX_BONES];
+    float linear[RD_MAX_BONES][3], angular[RD_MAX_BONES][3];
+} rd_snapshot;
+typedef int (*rd_water_query)(const float *bottom, float *surface);
+void RD_SetWaterQuery(rd_water_query query);
+int RD_Capture(int entity, rd_snapshot *state);
+int RD_Restore(int entity, float token, const rd_bone *bones,
+    int hitboxCount, const rd_hitbox *hitboxes, const rd_snapshot *state);
+void RD_RestoreLegacy(int entity);
+int RD_Trace(const float *start, const float *end, float limit, rd_hit *hit);
+void RD_Impulse(int entity, const float *point, const float *impulse);
+int RD_Frozen(int entity);
+int RD_ActiveBodies(void);
 void RD_Reset(void);
 void RD_BeginMesh(int key);
 void RD_AddTriangle(const float *a, const float *b, const float *c);

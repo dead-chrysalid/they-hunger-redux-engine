@@ -3857,7 +3857,8 @@ static int R_StudioDrawModel( int flags )
 
 	if( RI.currententity->curstate.movetype == MOVETYPE_FOLLOW )
 		R_StudioMergeBones( RI.currententity, RI.currentmodel );
-	else R_StudioSetupBones( RI.currententity );
+	else if( !R_RagdollApplyPose( RI.currententity, m_pStudioHeader, g_studio.bonestransform ))
+        R_StudioSetupBones( RI.currententity );
 
 	R_StudioSaveBones();
 

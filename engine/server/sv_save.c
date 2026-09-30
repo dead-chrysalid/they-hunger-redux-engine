@@ -1611,7 +1611,10 @@ static SAVERESTOREDATA *SaveGameState( int changelevel )
 	EntityPatchWrite( pSaveData, sv.name );
 
 	SaveClientState( pSaveData, sv.name, changelevel );
-
+#if !XASH_DEDICATED
+    // *.HL? is packed into the normal save archive (including quicksave aging).
+    if (!Host_IsDedicated() && svs.maxclients == 1 && ref.ragdollSave) ref.ragdollSave(sv.name);
+#endif
 	return pSaveData;
 }
 
@@ -1680,7 +1683,14 @@ static int LoadGameState( char const *level, qboolean changelevel )
 	}
 
 	LoadClientState( pSaveData, level, changelevel, false );
-
+#if !XASH_DEDICATED
+    if (!Host_IsDedicated() && ref.ragdollLoad) {
+        int *remap = (int *)Z_Malloc(pSaveData->tableCount*sizeof(int));
+        for (i=0; i<pSaveData->tableCount; ++i) remap[i] = pSaveData->pTable[i].pent ? NUM_FOR_EDICT(pSaveData->pTable[i].pent) : -1;
+        ref.ragdollLoad(level,remap,pSaveData->tableCount);
+        Mem_Free(remap);
+    }
+#endif
 	SaveFinish( pSaveData );
 
 	// restore server time

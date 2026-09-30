@@ -29,7 +29,8 @@ void Matrix(const btTransform &t, rd_matrix m, float scale = 1) {
 }
 struct Part {
     int bone, group;
-    float radius;
+    float radius, waterSurface = 0, waterQueryTime = -1;
+    bool water = false;
     btTransform offset; // bone -> centre of collider
     std::unique_ptr<btCollisionShape> shape;
     std::unique_ptr<btRigidBody> body;
@@ -37,10 +38,18 @@ struct Part {
 struct Doll {
     int entity, count;
     float token, scale;
+    double age = 0, stable = 0, sampleTime = 0;
+    btVector3 previousPosition[RD_MAX_BODIES];
+    btQuaternion previousRotation[RD_MAX_BODIES];
+    bool frozen = false, poseDirty = true, boundsDirty = true;
+    rd_matrix cachedPose[RD_MAX_BONES];
+    float mins[3], maxs[3];
     int parent[RD_MAX_BONES], part[RD_MAX_BONES];
     btTransform local[RD_MAX_BONES], initial[RD_MAX_BONES];
     std::vector<Part> parts;
     std::vector<std::unique_ptr<btTypedConstraint>> joints;
+    std::unique_ptr<btCompoundShape> frozenShape;
+    std::unique_ptr<btRigidBody> frozenBody;
 };
 struct Mesh {
     int key;
@@ -64,8 +73,11 @@ struct Physics {
         world.getSolverInfo().m_splitImpulse = true;
     }
     void removeDoll(size_t i) {
-        for (auto &j : dolls[i]->joints) world.removeConstraint(j.get());
-        for (auto &p : dolls[i]->parts) world.removeRigidBody(p.body.get());
+        if (dolls[i]->frozen) world.removeRigidBody(dolls[i]->frozenBody.get());
+        else {
+            for (auto &j : dolls[i]->joints) world.removeConstraint(j.get());
+            for (auto &p : dolls[i]->parts) world.removeRigidBody(p.body.get());
+        }
         dolls.erase(dolls.begin() + i);
     }
     void removeMesh(size_t i) {
@@ -82,6 +94,7 @@ struct Physics {
     }
 };
 std::unique_ptr<Physics> physics;
+rd_water_query waterQuery = nullptr;
 Physics &Get() { if (!physics) physics.reset(new Physics); return *physics; }
 bool HasName(const char *name, const char *word) {
     char lower[32];
@@ -94,7 +107,8 @@ float LengthScale(const rd_matrix m) {
 }
 }
 
-extern "C" void RD_Reset(void) { physics.reset(); }
+extern "C" void RD_Reset(void) { physics.reset(); waterQuery = nullptr; }
+extern "C" void RD_SetWaterQuery(rd_water_query query) { waterQuery = query; }
 extern "C" void RD_BeginMesh(int key) {
     auto &p = Get();
     p.pending.reset(new Mesh);
@@ -129,10 +143,23 @@ extern "C" void RD_EndMesh(const rd_matrix transform, int kinematic) {
     p.world.addRigidBody(m.body.get(), WorldGroup, CorpseGroup);
     p.meshes.push_back(std::move(p.pending));
 }
+static void Wake(Doll &d);
+static void Freeze(Doll &d);
+static void Buoyancy(Doll &d, float gravity, float dt);
 extern "C" void RD_MoveMesh(int key, const rd_matrix transform) {
     if (!physics) return;
     for (auto &m : physics->meshes) if (m->key == key) {
         const btTransform t = Transform(transform);
+        const btTransform old = m->body->getWorldTransform();
+        if (old == t) return; // Most doors/brushes are stationary; do not wake islands.
+        btVector3 a,b,c,e; m->shape->getAabb(old,a,b); m->shape->getAabb(t,c,e);
+        a.setMin(c); b.setMax(e);
+        for (auto &d : physics->dolls) if (d->frozen) {
+            float lo[3],hi[3]; RD_Bounds(d->entity,lo,hi);
+            if (a.x()<=hi[0]*Scale && b.x()>=lo[0]*Scale &&
+                a.y()<=hi[1]*Scale && b.y()>=lo[1]*Scale &&
+                a.z()<=hi[2]*Scale && b.z()>=lo[2]*Scale) Wake(*d);
+        }
         m->body->setWorldTransform(t);
         physics->world.updateSingleAabb(m->body.get());
         return;
@@ -215,6 +242,8 @@ extern "C" int RD_Create(int entity, float token, int count, const rd_bone *bone
         part.shape->calculateLocalInertia(mass, inertia);
         btRigidBody::btRigidBodyConstructionInfo info(mass, nullptr, part.shape.get(), inertia);
         part.body.reset(new btRigidBody(info));
+        part.body->setUserIndex(entity);
+        part.body->setUserIndex2(group[i]);
         const btTransform t = d->initial[i] * part.offset;
         part.body->setWorldTransform(t);
         part.body->setInterpolationWorldTransform(t);
@@ -229,6 +258,8 @@ extern "C" int RD_Create(int entity, float token, int count, const rd_bone *bone
         // A small deterministic tumble prevents balanced standing corpses.
         part.body->setAngularVelocity(btVector3(v.y(), -v.x(), 0) * 0.35f + btVector3(0.4f, 0.7f, 0.2f));
         if (group[i] == hitgroup) part.body->setAngularVelocity(part.body->getAngularVelocity() * 1.8f);
+        d->previousPosition[d->parts.size()] = t.getOrigin();
+        d->previousRotation[d->parts.size()] = t.getRotation();
         d->part[i] = (int)d->parts.size();
         d->parts.push_back(std::move(part));
     }
@@ -279,16 +310,44 @@ extern "C" void RD_Step(double time, float gravity) {
     if (dt <= 0) return;
     if (!std::isfinite(gravity)) gravity = 800;
     p.world.setGravity(btVector3(0, 0, -std::max(0.0f, gravity) * Scale));
+    if (!RD_ActiveBodies()) {
+        p.accumulator = 0;
+        for (auto &m : p.meshes) m->body->setInterpolationWorldTransform(m->body->getWorldTransform());
+        return;
+    }
     p.accumulator += dt;
     const double step = 1.0 / 120.0;
     while (p.accumulator + 1e-9 >= step) {
+        for (auto &d : p.dolls) if (!d->frozen) Buoyancy(*d, gravity, (float)step);
         p.world.stepSimulation((btScalar)step, 0);
+        for (auto &d : p.dolls) if (!d->frozen) {
+            d->age += step; d->poseDirty = d->boundsDirty = true;
+            d->sampleTime += step;
+            if (d->sampleTime >= 0.25) {
+                bool quiet = true, almostQuiet = true;
+                const bool rootQuiet = (d->parts[0].body->getWorldTransform().getOrigin()-d->previousPosition[0]).length2()<0.0016f;
+                for (size_t i=0; i<d->parts.size(); ++i) {
+                    const auto &t = d->parts[i].body->getWorldTransform();
+                    const float travel = (t.getOrigin()-d->previousPosition[i]).length2();
+                    const float rotation = std::fabs(t.getRotation().dot(d->previousRotation[i]));
+                    if (travel > 0.0004f || rotation < 0.9987f) quiet = false;
+                    if (travel > 0.0036f) almostQuiet = false;
+                    d->previousPosition[i]=t.getOrigin(); d->previousRotation[i]=t.getRotation();
+                }
+                // Constraint correction can leave nonzero velocities on a
+                // visibly settled legacy rig. Measure actual pose motion.
+                d->stable = quiet || (d->age>8 && almostQuiet) || (d->age>12 && rootQuiet) ? d->stable+d->sampleTime : 0;
+                d->sampleTime=0;
+                if(d->age>2 && d->stable>0.75) Freeze(*d);
+            }
+        }
         p.accumulator -= step;
     }
 }
 extern "C" int RD_Pose(int entity, rd_matrix *pose, int count) {
     Doll *d = physics ? physics->find(entity) : nullptr;
     if (!d || count != d->count) return 0;
+    if (!d->poseDirty) { std::memcpy(pose, d->cachedPose, count*sizeof(rd_matrix)); return 1; }
     btTransform result[RD_MAX_BONES];
     // Root bones lacking a collider must travel with the physical root.
     auto &root = d->parts[0];
@@ -300,11 +359,13 @@ extern "C" int RD_Pose(int entity, rd_matrix *pose, int count) {
         else result[i] = result[d->parent[i]] * d->local[i];
         Matrix(result[i], pose[i], d->scale);
     }
+    std::memcpy(d->cachedPose, pose, count*sizeof(rd_matrix)); d->poseDirty = false;
     return 1;
 }
 extern "C" int RD_Bounds(int entity, float *mins, float *maxs) {
     Doll *d = physics ? physics->find(entity) : nullptr;
     if (!d) return 0;
+    if (!d->boundsDirty) { std::memcpy(mins,d->mins,12); std::memcpy(maxs,d->maxs,12); return 1; }
     btVector3 lo(1e10f,1e10f,1e10f), hi(-1e10f,-1e10f,-1e10f);
     for (auto &p : d->parts) {
         // Capsule getAabb encloses a rotated box, which can extend far below
@@ -321,6 +382,7 @@ extern "C" int RD_Bounds(int entity, float *mins, float *maxs) {
         }
     }
     for (int i = 0; i < 3; ++i) { mins[i] = lo[i]/Scale - 16; maxs[i] = hi[i]/Scale + 16; }
+    std::memcpy(d->mins,mins,12); std::memcpy(d->maxs,maxs,12); d->boundsDirty = false;
     return 1;
 }
 extern "C" int RD_Count(void) { return physics ? (int)physics->dolls.size() : 0; }
@@ -335,4 +397,171 @@ extern "C" float RD_JointError(int entity) {
         error = std::max(error, (float)(a-b).length()/Scale);
     }
     return error;
+}
+
+// Settled corpses retain their exact pose and one static compound collider.
+// Their limb bodies and constraints leave the dynamics solver completely.
+static void Freeze(Doll &d) {
+    if (d.frozen || !physics) return;
+    float lo[3],hi[3]; RD_Bounds(d.entity,lo,hi);
+    btTransform root; root.setIdentity(); root.setOrigin((Vec(lo)+Vec(hi))*0.5f);
+    d.frozenShape.reset(new btCompoundShape);
+    for (auto &p : d.parts) {
+        d.frozenShape->addChildShape(root.inverse()*p.body->getWorldTransform(), p.shape.get());
+        p.body->setLinearVelocity(btVector3(0,0,0)); p.body->setAngularVelocity(btVector3(0,0,0));
+    }
+    for (auto &j : d.joints) physics->world.removeConstraint(j.get());
+    for (auto &p : d.parts) physics->world.removeRigidBody(p.body.get());
+    btRigidBody::btRigidBodyConstructionInfo info(0,nullptr,d.frozenShape.get());
+    d.frozenBody.reset(new btRigidBody(info)); d.frozenBody->setWorldTransform(root);
+    d.frozenBody->setUserIndex(d.entity); d.frozenBody->setUserIndex2(-1);
+    d.frozenBody->setFriction(0.8f);
+    physics->world.addRigidBody(d.frozenBody.get(),CorpseGroup,CorpseGroup);
+    d.frozen = true;
+}
+static void Wake(Doll &d) {
+    if (!d.frozen || !physics) return;
+    physics->world.removeRigidBody(d.frozenBody.get());
+    d.frozenBody.reset(); d.frozenShape.reset();
+    for (auto &p : d.parts) {
+        physics->world.addRigidBody(p.body.get(),CorpseGroup,WorldGroup|CorpseGroup);
+        p.body->activate(true); p.waterQueryTime = -1;
+    }
+    for (auto &j : d.joints) physics->world.addConstraint(j.get(),true);
+    d.frozen = false; d.age = d.stable = d.sampleTime = 0;
+    for(size_t i=0;i<d.parts.size();++i) {
+        d.previousPosition[i]=d.parts[i].body->getWorldTransform().getOrigin();
+        d.previousRotation[i]=d.parts[i].body->getWorldTransform().getRotation();
+    }
+}
+static void Buoyancy(Doll &d, float gravity, float dt) {
+    (void)dt;
+    if (!waterQuery) return;
+    for (auto &p : d.parts) {
+        auto &b = *p.body;
+        btVector3 lo,hi; p.shape->getAabb(b.getWorldTransform(),lo,hi);
+        if (p.waterQueryTime < 0 || d.age - p.waterQueryTime >= 0.1) {
+            float bottom[3] = {b.getWorldTransform().getOrigin().x()/Scale,
+                b.getWorldTransform().getOrigin().y()/Scale,lo.z()/Scale+0.1f};
+            p.water = waterQuery(bottom,&p.waterSurface)!=0;
+            p.waterQueryTime = (float)d.age;
+            b.setDamping(p.water?0.55f:0.12f,p.water?0.65f:0.35f);
+        }
+        if (!p.water) continue;
+        const float fraction = std::max(0.0f,std::min(1.0f,
+            (p.waterSurface*Scale-lo.z())/std::max(0.01f,(float)(hi.z()-lo.z()))));
+        const float mass = 1.0f/b.getInvMass();
+        // Slightly less dense than water, so the corpse settles at the surface.
+        b.applyCentralForce(btVector3(0,0,mass*gravity*Scale*1.15f*fraction));
+        b.applyCentralForce(-b.getLinearVelocity()*mass*2.5f*fraction);
+    }
+}
+extern "C" int RD_Frozen(int entity) {
+    Doll *d=physics?physics->find(entity):nullptr; return d && d->frozen;
+}
+extern "C" int RD_ActiveBodies(void) {
+    int count=0; if(physics) for(auto &d:physics->dolls) if(!d->frozen) count+=(int)d->parts.size(); return count;
+}
+extern "C" int RD_Trace(const float *start,const float *end,float limit,rd_hit *hit) {
+    if (!physics || !hit || limit<=0) return 0;
+    btVector3 from=Vec(start), to=from+(Vec(end)-from)*std::min(1.0f,limit);
+    if ((to-from).length2()<1e-10f) return 0;
+    btCollisionWorld::ClosestRayResultCallback ray(from,to);
+    ray.m_collisionFilterGroup=CorpseGroup; ray.m_collisionFilterMask=CorpseGroup;
+    physics->world.rayTest(from,to,ray);
+    if(!ray.hasHit()) return 0;
+    hit->entity=ray.m_collisionObject->getUserIndex();
+    hit->group=ray.m_collisionObject->getUserIndex2();
+    // Compound static corpses still report the exact limb/hitgroup.
+    if(hit->group<0) {
+        Doll *d=physics->find(hit->entity);
+        btTransform a,b; a.setIdentity(); b.setIdentity(); a.setOrigin(from); b.setOrigin(to);
+        btScalar closest=1;
+        for(auto &p:d->parts) {
+            btCollisionWorld::ClosestRayResultCallback partRay(from,to);
+            btCollisionWorld::rayTestSingle(a,b,p.body.get(),p.shape.get(),p.body->getWorldTransform(),partRay);
+            if(partRay.hasHit() && partRay.m_closestHitFraction<closest) {
+                closest=partRay.m_closestHitFraction; hit->group=p.group;
+            }
+        }
+    }
+    hit->fraction=ray.m_closestHitFraction*std::min(1.0f,limit);
+    for(int i=0;i<3;++i) { hit->point[i]=ray.m_hitPointWorld[i]/Scale; hit->normal[i]=ray.m_hitNormalWorld[i]; }
+    return 1;
+}
+extern "C" void RD_Impulse(int entity,const float *point,const float *impulse) {
+    Doll *d=physics?physics->find(entity):nullptr; if(!d) return;
+    for(int i=0;i<3;++i) if(!std::isfinite(point[i]) || !std::isfinite(impulse[i])) return;
+    Wake(*d); d->age=d->stable=0;
+    // Apply at the hit point to the nearest collider surface, rather than its centre.
+    Part *best=nullptr; float distance=1e30f;
+    for(auto &p:d->parts) {
+        btVector3 lo,hi; p.shape->getAabb(p.body->getWorldTransform(),lo,hi);
+        btVector3 v=Vec(point), nearest=v; nearest.setMax(lo); nearest.setMin(hi);
+        float x=(v-nearest).length2();
+        if(x<distance) { distance=x; best=&p; }
+        p.body->activate(true); p.waterQueryTime=-1;
+    }
+    btVector3 kick=Vec(impulse); if(kick.length()>12) kick*=12/kick.length();
+    // Input is a velocity kick in GoldSrc units. Mass scales momentum consistently.
+    best->body->applyImpulse(kick/best->body->getInvMass(),Vec(point)-best->body->getWorldTransform().getOrigin());
+}
+extern "C" int RD_Capture(int entity,rd_snapshot *state) {
+    Doll *d=physics?physics->find(entity):nullptr; if(!d || !state) return 0;
+    std::memset(state,0,sizeof(*state)); state->count=d->count; state->frozen=d->frozen?1:0;
+    RD_Pose(entity,state->pose,d->count);
+    for(int i=0;i<d->count;++i) Matrix(d->initial[i],state->initial[i],d->scale);
+    for(auto &p:d->parts) for(int a=0;a<3;++a) {
+        state->linear[p.bone][a]=p.body->getLinearVelocity()[a]/Scale;
+        state->angular[p.bone][a]=p.body->getAngularVelocity()[a];
+    }
+    return 1;
+}
+extern "C" int RD_Restore(int entity,float token,const rd_bone *bones,
+    int hitboxCount,const rd_hitbox *hitboxes,const rd_snapshot *state) {
+    if(!state || state->count<1 || state->count>RD_MAX_BONES || (state->frozen!=0 && state->frozen!=1)) return 0;
+    for(int i=0;i<state->count;++i) {
+        for(int r=0;r<3;++r) for(int c=0;c<4;++c) if(!std::isfinite(state->pose[i][r][c])) return 0;
+        const auto &m=state->pose[i]; btVector3 x(m[0][0],m[1][0],m[2][0]),y(m[0][1],m[1][1],m[2][1]);
+        if(x.cross(y).length2()<1e-8f) return 0;
+        for(int a=0;a<3;++a) if(!std::isfinite(state->linear[i][a]) || !std::isfinite(state->angular[i][a]) ||
+            std::fabs(state->linear[i][a])>4096 || std::fabs(state->angular[i][a])>1000) return 0;
+    }
+    const float zero[3]={}; RD_Remove(entity);
+    if(!RD_Create(entity,token,state->count,bones,hitboxCount,hitboxes,state->initial,zero,0)) return 0;
+    Doll &d=*physics->find(entity);
+    for(auto &p:d.parts) {
+        const btTransform t=Transform(state->pose[p.bone])*p.offset;
+        p.body->setWorldTransform(t); p.body->setInterpolationWorldTransform(t);
+        p.body->setLinearVelocity(Vec(state->linear[p.bone]));
+        p.body->setAngularVelocity(btVector3(state->angular[p.bone][0],state->angular[p.bone][1],state->angular[p.bone][2]));
+        physics->world.updateSingleAabb(p.body.get());
+    }
+    if(state->frozen) Freeze(d);
+    return 1;
+}
+extern "C" void RD_RestoreLegacy(int entity) {
+    Doll *d=physics?physics->find(entity):nullptr; if(!d) return;
+    float lo[3],hi[3]; RD_Bounds(entity,lo,hi);
+    // Older saves have only the final death animation. Do not reapply a lethal
+    // impulse to this prone pose; lift its collider assembly out of the floor.
+    const float x=(lo[0]+hi[0])*0.5f,y=(lo[1]+hi[1])*0.5f;
+    btVector3 from(x*Scale,y*Scale,(hi[2]+64)*Scale),to(x*Scale,y*Scale,(lo[2]-256)*Scale);
+    btCollisionWorld::ClosestRayResultCallback ray(from,to);
+    ray.m_collisionFilterGroup=CorpseGroup; ray.m_collisionFilterMask=WorldGroup;
+    physics->world.rayTest(from,to,ray);
+    if(ray.hasHit() && ray.m_hitNormalWorld.z()>0.5f) {
+        const float lift=ray.m_hitPointWorld.z()/Scale-(lo[2]+16)+0.5f;
+        if(lift>0 && lift<256) for(auto &p:d->parts) {
+            btTransform t=p.body->getWorldTransform(); t.getOrigin().setZ(t.getOrigin().z()+lift*Scale);
+            p.body->setWorldTransform(t); p.body->setInterpolationWorldTransform(t);
+            physics->world.updateSingleAabb(p.body.get());
+        }
+    }
+    d->poseDirty=d->boundsDirty=true; RD_Bounds(entity,lo,hi);
+    // Underwater legacy corpses must be allowed to rise, rather than frozen on the bottom.
+    bool water=false;
+    if(waterQuery) { float sample[3]={x,y,lo[2]+16},surface; water=waterQuery(sample,&surface)!=0; }
+    if(!water) Freeze(*d);
+    else for(auto &p:d->parts) { p.body->setLinearVelocity(btVector3(0,0,0)); p.body->setAngularVelocity(btVector3(0,0,0)); }
 }

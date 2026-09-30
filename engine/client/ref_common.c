@@ -459,6 +459,7 @@ static void R_UnloadProgs( void )
 
 	COM_FreeLibrary( ref.hInstance );
 	ref.hInstance = NULL;
+    ref.ragdollTrace = NULL; ref.ragdollSave = NULL; ref.ragdollLoad = NULL;
 
 	memset( &refState, 0, sizeof( refState ));
 	memset( &ref.dllFuncs, 0, sizeof( ref.dllFuncs ));
@@ -540,6 +541,10 @@ static qboolean R_LoadProgs( const char *name )
 
 	Cvar_FullSet( "host_refloaded", "1", FCVAR_READ_ONLY );
 	ref.initialized = true;
+    // Optional SP companion exports; public renderer API 4 remains unchanged.
+    ref.ragdollTrace = (rd_trace_export)COM_GetProcAddress(ref.hInstance, "Ragdoll_Trace");
+    ref.ragdollSave = (rd_save_export)COM_GetProcAddress(ref.hInstance, "Ragdoll_Save");
+    ref.ragdollLoad = (rd_load_export)COM_GetProcAddress(ref.hInstance, "Ragdoll_Load");
 
 	// initialize TriAPI callbacks
 	CL_FillTriAPIFromRef( &gTriApi, &ref.dllFuncs );

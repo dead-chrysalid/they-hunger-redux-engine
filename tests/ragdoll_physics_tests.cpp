@@ -2,9 +2,11 @@
 #include "../3rdparty/bullet/src/btBulletDynamicsCommon.h"
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -92,8 +94,78 @@ static Rig Model(const std::string &path) {
     }
     return r;
 }
+static int Water(const float *bottom,float *surface) {
+    *surface=80; return bottom[2]<80;
+}
+static void StateTests() {
+    auto rig=Synthetic(); Floor(); Create(rig); Step(60,0.4f);
+    rd_snapshot state; Check(RD_Capture(1,&state)!=0,"snapshot capture failed");
+    rd_matrix before[RD_MAX_BONES],after[RD_MAX_BONES]; RD_Pose(1,before,rig.count);
+    Floor(); Check(RD_Restore(1,9,rig.bones,(int)rig.boxes.size(),rig.boxes.data(),&state)!=0,"active restore failed");
+    RD_Pose(1,after,rig.count);
+    for(int i=0;i<rig.count;++i) for(int a=0;a<3;++a) for(int b=0;b<4;++b)
+        Check(std::fabs(before[i][a][b]-after[i][a][b])<0.001f,"save/load changed corpse pose");
+    Step(60,8); Validate(rig); Check(RD_Frozen(1)!=0,"settled corpse never froze");
+    Check(RD_ActiveBodies()==0,"settled limb bodies remain in solver");
+    RD_Capture(1,&state); Floor(); Check(RD_Restore(1,10,rig.bones,(int)rig.boxes.size(),rig.boxes.data(),&state),"frozen restore failed");
+    Check(RD_Frozen(1) && !RD_ActiveBodies(),"frozen state was lost on restore");
+    RD_Pose(1,before,rig.count); Step(60,30); RD_Pose(1,after,rig.count);
+    Check(!std::memcmp(before,after,rig.count*sizeof(rd_matrix)),"frozen corpse drifts after load");
+    state.pose[0][0][0]=std::numeric_limits<float>::quiet_NaN();
+    Check(!RD_Restore(2,1,rig.bones,(int)rig.boxes.size(),rig.boxes.data(),&state),"corrupt snapshot accepted");
+    float point[3]={after[0][0][3],after[0][1][3],after[0][2][3]};
+    float start[3]={point[0]-50,point[1],point[2]},end[3]={point[0]+50,point[1],point[2]};
+    rd_hit hit; Check(RD_Trace(start,end,1,&hit) && hit.entity==1,"frozen corpse not hittable");
+    Check(!RD_Trace(start,end,0.1f,&hit),"corpse hit through nearer occluder");
+    float impulse[3]={0,140,200}; RD_Impulse(1,point,impulse);
+    Check(!RD_Frozen(1) && RD_ActiveBodies()==3,"hit did not wake whole corpse");
+    RD_Step(30.2,800); RD_Pose(1,after,rig.count);
+    Check(std::fabs(after[0][1][3]-before[0][1][3])>0.1f,"hit impulse had no effect");
+    Floor(); for(int i=0;i<rig.count;++i) rig.pose[i][2][3]=1+i*16;
+    Create(rig); RD_RestoreLegacy(1); RD_Pose(1,before,rig.count); Step(60,20); RD_Pose(1,after,rig.count);
+    float lo[3],hi[3]; RD_Bounds(1,lo,hi);
+    Check(RD_Frozen(1) && lo[2]>-16,"legacy restore remains inside floor");
+    Check(!std::memcmp(before,after,rig.count*sizeof(rd_matrix)),"legacy corpse tweaks after restore");
+    std::cout<<"PASS exact active/frozen save pose, malformed state, legacy floor recovery, frozen ray hit, occlusion, wake impulse\n";
+    Floor(); rig=Synthetic();
+    rd_matrix platform; Identity(platform);
+    float pa[]={-1024,-1024,0},pb[]={1024,-1024,0},pc[]={1024,1024,0},pd[]={-1024,1024,0};
+    RD_BeginMesh(1); RD_AddTriangle(pa,pb,pc); RD_AddTriangle(pa,pc,pd); RD_EndMesh(platform,1);
+    Create(rig); Step(60,8); Check(RD_Frozen(1),"platform corpse did not settle");
+    for(int i=1;i<=120;++i) {
+        platform[2][3]=float(i)*0.5f; RD_MoveMesh(1,platform); RD_Step(8+double(i)/60,800);
+    }
+    RD_Bounds(1,lo,hi); Check(lo[2]>40,"moving brush failed to wake/carry frozen corpse");
+    std::cout<<"PASS moving platform wakes and carries a frozen corpse\n";
+    Floor(); rig=Synthetic(); RD_SetWaterQuery(Water); Create(rig); Step(60,15);
+    RD_Bounds(1,lo,hi);
+    Check(lo[2]>30 && hi[2]>80 && hi[2]<150,"corpse did not float at water surface");
+    RD_Capture(1,&state); Floor(); RD_SetWaterQuery(Water);
+    Check(RD_Restore(1,2,rig.bones,(int)rig.boxes.size(),rig.boxes.data(),&state),"water restore failed");
+    Step(60,8); RD_Bounds(1,lo,hi); Check(lo[2]>30,"restored floating corpse sank");
+    std::cout<<"PASS buoyancy equilibrium and restored water pose\n";
+}
+static void CrowdTest(const std::string &directory) {
+    Floor(); auto rig=Model(directory+"/zombie.mdl");
+    for(int n=0;n<20;++n) {
+        auto r=rig; for(int i=0;i<r.count;++i) { r.pose[i][0][3]+=(n%5)*180-360; r.pose[i][1][3]+=(n/5)*180-270; }
+        Create(r,n+1,float(n+1));
+    }
+    auto clock=std::chrono::steady_clock::now(); RD_Step(0,800);
+    for(int i=1;i<=60;++i) RD_Step(double(i)/60,800);
+    auto active=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-clock).count();
+    for(int i=61;i<=1200;++i) RD_Step(double(i)/60,800);
+    int frozen=0; for(int i=1;i<=20;++i) frozen+=RD_Frozen(i);
+    std::cout<<"Crowd: "<<frozen<<"/20 frozen, "<<RD_ActiveBodies()<<" solver bodies\n";
+    Check(frozen==20 && RD_Count()==20 && !RD_ActiveBodies(),"old crowd keeps expensive dynamics bodies");
+    clock=std::chrono::steady_clock::now();
+    for(int i=1201;i<=1260;++i) RD_Step(double(i)/60,800);
+    auto idle=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-clock).count();
+    std::cout<<"PASS 20 persistent corpses: active simulation "<<active<<" ms / 60 frames, settled "<<idle<<" ms / 60 frames\n";
+}
 int main(int argc,char **argv) {
     try {
+        StateTests();
         float a=Simulate(30), b=Simulate(60), c=Simulate(144);
         Check(std::fabs(a-b)<0.01f && std::fabs(a-c)<0.01f,"frame-rate-dependent simulation");
         std::cout<<"PASS fixed 120 Hz, floor collision, constrained joints, finite poses, pause\n";
@@ -130,6 +202,7 @@ int main(int argc,char **argv) {
                 }
             }
             Check(failures==0,"model suite failed");
+            CrowdTest(argv[1]);
         }
         RD_Reset(); return 0;
     } catch(const std::exception &e) { std::cerr<<"FAIL ragdoll physics: "<<e.what()<<"\n";RD_Reset();return 1; }
