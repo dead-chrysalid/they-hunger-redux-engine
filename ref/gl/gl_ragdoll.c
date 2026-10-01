@@ -123,11 +123,7 @@ static void R_RagdollMesh(int key, model_t *model, const matrix3x4 transform, in
     }
     RD_EndMesh(transform, kinematic);
 }
-void R_RagdollNewMap(void) {
-    matrix3x4 identity;
-    RD_Reset();
-    memset(poses, 0, sizeof(poses)); memset(brushes, 0, sizeof(brushes));
-    mapReady = 0;
+void R_RagdollInit(void) {
     if (!registered) {
         enabled = gEngfuncs.Cvar_Get("cl_ragdolls", "1", FCVAR_ARCHIVE, "Simulate killed walking monsters with Bullet physics");
         debug = gEngfuncs.Cvar_Get("cl_ragdoll_debug", "0", 0, "Log ragdoll creation and collider counts");
@@ -135,6 +131,13 @@ void R_RagdollNewMap(void) {
         gEngfuncs.Cmd_AddCommand("ragdoll_impulse",R_RagdollImpulse,"Apply a local corpse hit impulse");
         registered = 1;
     }
+}
+void R_RagdollNewMap(void) {
+    matrix3x4 identity;
+    RD_Reset();
+    memset(poses, 0, sizeof(poses)); memset(brushes, 0, sizeof(brushes));
+    mapReady = 0;
+    R_RagdollInit();
     if (!enabled->value || !WORLDMODEL) return;
     Matrix3x4_LoadIdentity(identity);
     {

@@ -1221,6 +1221,7 @@ qboolean R_Init( void )
 		return true;
 
 	GL_InitCommands();
+	R_RagdollInit(); // Register before valve.rc/config.cfg execute.
 	GL_InitRandomTable();
 
 	GL_SetDefaultState();
