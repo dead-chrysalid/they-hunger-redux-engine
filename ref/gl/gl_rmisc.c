@@ -14,6 +14,7 @@ GNU General Public License for more details.
 */
 
 #include "gl_local.h"
+#include "gl_ragdoll.h"
 #include "shake.h"
 #include "screenfade.h"
 #include "cdll_int.h"
@@ -203,6 +204,7 @@ void R_NewMap( void )
 	int	i;
 
 	R_ClearDecals(); // clear all level decals
+	R_RagdollNewMap();
 
 	R_StudioResetPlayerModels();
 

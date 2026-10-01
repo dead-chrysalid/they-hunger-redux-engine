@@ -2217,6 +2217,21 @@ static void GAME_EXPORT pfnTraceLine( const float *v1, const float *v2, int fNoM
 	trace = SV_Move( v1, vec3_origin, vec3_origin, v2, fNoMonsters, pentToSkip, false );
 	if( !SV_IsValidEdict( trace.ent ))
 		trace.ent = svgame.edicts;
+#if !XASH_DEDICATED
+    // Query actual client corpse colliders for weapon/point traces only.
+    // Player movement still uses SV_Move hulls and remains nonblocking.
+    if (!(fNoMonsters & 1) && svs.maxclients == 1 && ref.initialized && ref.ragdollTrace) {
+        rd_hit hit;
+        if (ref.ragdollTrace(v1,v2,trace.fraction,&hit)) {
+            edict_t *corpse = SV_EdictNum(hit.entity);
+            if (SV_IsValidEdict(corpse) && corpse->v.deadflag != DEAD_NO && corpse->v.solid == SOLID_NOT) {
+                trace.fraction = hit.fraction; trace.ent = corpse;
+                VectorCopy(hit.point,trace.endpos); VectorCopy(hit.normal,trace.plane.normal);
+                trace.plane.dist = DotProduct(hit.point,hit.normal); trace.hitgroup = hit.group;
+            }
+        }
+    }
+#endif
 	SV_ConvertTrace( ptr, &trace );
 }
 

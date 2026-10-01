@@ -1241,6 +1241,7 @@ int EXPORT Host_Main( int argc, char **argv, const char *progname, int bChangeGa
 	Cvar_Get( "cl_autowepswitch", "1", FCVAR_ARCHIVE|FCVAR_USERINFO, "automatically switch to picked-up weapons" );
 	Cvar_Get( "hud_fastswitch", "0", FCVAR_ARCHIVE, "switch weapons without confirmation" );
 	Cvar_Get( "sv_physical_bullets", "0", FCVAR_ARCHIVE, "experimental physical bullet simulation" );
+	Cvar_Get( "sv_ragdolls", "1", FCVAR_ARCHIVE, "enable physics for new enemy deaths" );
 	Cvar_Get( "sv_hitscan_impact_delay", "1", FCVAR_ARCHIVE, "enable delayed hitscan impacts" );
 	Cvar_Get( "sv_hitscan_impact_delay_min", "0.02", FCVAR_ARCHIVE, "minimum hitscan impact delay in seconds" );
 	Cvar_Get( "sv_hitscan_impact_delay_max", "0.06", FCVAR_ARCHIVE, "maximum hitscan impact delay in seconds" );

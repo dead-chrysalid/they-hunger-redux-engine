@@ -17,6 +17,7 @@ GNU General Public License for more details.
 #define REF_COMMON_H
 
 #include "ref_api.h"
+#include "ragdoll_bridge.h"
 
 #define RP_LOCALCLIENT( e )	((e) != NULL && (e)->index == ( cl.playernum + 1 ) && e->player )
 
@@ -26,6 +27,9 @@ struct ref_state_s
 
 	HINSTANCE hInstance;
 	ref_interface_t dllFuncs;
+    rd_trace_export ragdollTrace;
+    rd_save_export ragdollSave;
+    rd_load_export ragdollLoad;
 
 	int numRenderers;
 	string shortNames[DEFAULT_RENDERERS_LEN];

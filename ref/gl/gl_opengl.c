@@ -1,5 +1,6 @@
 
 #include "gl_local.h"
+#include "gl_ragdoll.h"
 #if XASH_GL4ES
 #include "gl4es/include/gl4esinit.h"
 #include "gl4es/include/gl4eshint.h"
@@ -1348,6 +1349,7 @@ void R_Shutdown( void )
 		return;
 
 	GL_RemoveCommands();
+	R_RagdollShutdown();
 	R_ShutdownImages();
 
 	Mem_FreePool( &r_temppool );
