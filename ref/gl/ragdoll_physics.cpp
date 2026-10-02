@@ -31,7 +31,8 @@ struct Part {
     int bone, group;
     float radius, waterSurface = 0, waterQueryTime = -1;
     float linearDamping=0.12f,angularDamping=0.35f;
-    bool water = false;
+    bool water = false, fittedBoot = false;
+    btTransform stepStart;
     btTransform offset; // bone -> centre of collider
     std::unique_ptr<btCollisionShape> shape;
     std::unique_ptr<btRigidBody> body;
@@ -180,6 +181,21 @@ extern "C" int RD_Has(int entity, float token) {
     Doll *d = physics->find(entity);
     return d && std::fabs(d->token - token) < 0.0005f;
 }
+extern "C" void RD_FitFootHitboxes(int boneCount,const rd_bone *bones,int vertexCount,
+    const float (*vertices)[3],const unsigned char *vertexBones,int boxCount,rd_hitbox *boxes) {
+    if(!bones || !vertices || !vertexBones || !boxes || boneCount<1 || boneCount>RD_MAX_BONES || vertexCount<0 || boxCount<0) return;
+    for(int b=0;b<boxCount;++b) {
+        auto &box=boxes[b];
+        if(box.bone<0 || box.bone>=boneCount || (box.group!=6 && box.group!=7) || !HasName(bones[box.bone].name,"foot")) continue;
+        // Studio reference vertices are already in their weighted bone's local
+        // space. Keep authored coverage, extending it to enclose the actual boot.
+        for(int v=0;v<vertexCount;++v) if(vertexBones[v]==box.bone)
+            for(int a=0;a<3;++a) if(std::isfinite(vertices[v][a])) {
+                box.mins[a]=std::min(box.mins[a],vertices[v][a]);
+                box.maxs[a]=std::max(box.maxs[a],vertices[v][a]);
+            }
+    }
+}
 extern "C" int RD_Create(int entity, float token, int count, const rd_bone *bones,
     int hitboxCount, const rd_hitbox *hitboxes, const rd_matrix *pose, const float *velocity, int hitgroup) {
     if (count < 1 || count > RD_MAX_BONES || hitboxCount < 1 || hitboxCount > 256 || !std::isfinite(token)) return 0;
@@ -244,11 +260,13 @@ extern "C" int RD_Create(int entity, float token, int count, const rd_bone *bone
         const bool contactPatch=!oversized && HasName(bones[i].name,"bip01") &&
             (HasName(bones[i].name,"spine") || HasName(bones[i].name,"pelvis") || HasName(bones[i].name,"foot"));
         const bool footPatch=contactPatch && HasName(bones[i].name,"foot");
+        const bool fittedBoot=footPatch && (part.group==6 || part.group==7);
+        part.fittedBoot=fittedBoot;
         if (radius > 0.35f || contactPatch) {
-            // Feet need nearly the authored sole/toe extent, rather than the
-            // 15-percent shrink used on overlapping torso hitboxes.
-            part.shape.reset(new btBoxShape(half * (footPatch?0.95f:0.85f)));
-            part.shape->setMargin(0.01f);
+            // Full mesh-fitted foot coverage, including diagonal sole/toe
+            // contacts. Torso hitboxes still shrink to accommodate overlap.
+            part.shape.reset(new btBoxShape(fittedBoot?half+btVector3(0.002f,0.002f,0.002f):half*(footPatch?0.95f:0.85f)));
+            part.shape->setMargin(fittedBoot?0.003f:0.01f);
         } else if (axis == 0) part.shape.reset(new btCapsuleShapeX(radius, height));
         else if (axis == 2) part.shape.reset(new btCapsuleShapeZ(radius, height));
         else part.shape.reset(new btCapsuleShape(radius, height));
@@ -423,9 +441,36 @@ extern "C" void RD_Step(double time, float gravity) {
     p.accumulator += dt;
     const double step = 1.0 / 120.0;
     while (p.accumulator + 1e-9 >= step) {
-        for (auto &d : p.dolls) if (!d->frozen) Buoyancy(*d, gravity, (float)step);
+        for (auto &d : p.dolls) if (!d->frozen) {
+            Buoyancy(*d, gravity, (float)step);
+            for(auto &part:d->parts) if(part.fittedBoot) part.stepStart=part.body->getWorldTransform();
+        }
         p.world.stepSimulation((btScalar)step, 0);
         for (auto &d : p.dolls) if (!d->frozen) {
+            // Bullet's built-in CCD sweeps an inscribed sphere and misses the
+            // toe/sole of a rotating boot. Sweep the full box against brushes.
+            for(auto &part:d->parts) if(part.fittedBoot) {
+                auto &body=*part.body;const btTransform end=body.getWorldTransform();
+                if((end.getOrigin()-part.stepStart.getOrigin()).length2()<1e-8f &&
+                    std::fabs(end.getRotation().dot(part.stepStart.getRotation()))>0.999999f) continue;
+                btCollisionWorld::ClosestConvexResultCallback hit(part.stepStart.getOrigin(),end.getOrigin());
+                hit.m_collisionFilterGroup=CorpseGroup;hit.m_collisionFilterMask=WorldGroup;
+                p.world.convexSweepTest(static_cast<btConvexShape *>(part.shape.get()),part.stepStart,end,hit);
+                if(hit.hasHit() && hit.m_closestHitFraction<1 && hit.m_hitNormalWorld.z()>0.5f) {
+                    // Correct only motion through the brush plane. Keeping
+                    // tangential motion/rotation avoids pinning the ankle while
+                    // the joint solver is trying to move the rest of the leg.
+                    const auto *shape=static_cast<btConvexShape *>(part.shape.get());
+                    const btVector3 support=end*shape->localGetSupportingVertex(end.getBasis().transpose()*-hit.m_hitNormalWorld);
+                    const btScalar depth=(hit.m_hitPointWorld-support).dot(hit.m_hitNormalWorld);
+                    if(depth<=0) continue;
+                    btTransform safe=end;safe.getOrigin()+=hit.m_hitNormalWorld*(depth+0.0001f);
+                    body.setWorldTransform(safe);body.setInterpolationWorldTransform(safe);
+                    btVector3 velocity=body.getLinearVelocity();const btScalar inward=velocity.dot(hit.m_hitNormalWorld);
+                    if(inward<0) body.setLinearVelocity(velocity-hit.m_hitNormalWorld*inward);
+                    p.world.updateSingleAabb(&body);
+                }
+            }
             d->age += step; d->poseDirty = d->boundsDirty = true;
             d->activeTime += step;
             if(d->activeTime>=60.0) { Freeze(*d);continue; }

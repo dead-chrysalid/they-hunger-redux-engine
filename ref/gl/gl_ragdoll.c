@@ -282,6 +282,19 @@ void R_RagdollBones(cl_entity_t *e, studiohdr_t *header, matrix3x4 *pose) {
             boxes[i].bone = mdlBoxes[i].bone; boxes[i].group = mdlBoxes[i].group;
             VectorCopy(mdlBoxes[i].bbmin, boxes[i].mins); VectorCopy(mdlBoxes[i].bbmax, boxes[i].maxs);
         }
+        {
+            int b;
+            mstudiobodyparts_t *parts=(mstudiobodyparts_t *)((byte *)header+header->bodypartindex);
+            for(b=0;b<header->numbodyparts;++b) {
+                mstudiomodel_t *models=(mstudiomodel_t *)((byte *)header+parts[b].modelindex);
+                int selected;
+                if(parts[b].base<=0 || parts[b].nummodels<=0 || e->curstate.body<0) return;
+                selected=(e->curstate.body/parts[b].base)%parts[b].nummodels;
+                RD_FitFootHitboxes(header->numbones,bones,models[selected].numverts,
+                    (const float (*)[3])((byte *)header+models[selected].vertindex),
+                    (byte *)header+models[selected].vertinfoindex,header->numhitboxes,boxes);
+            }
+        }
         if(e->curstate.iuser4==RD_PROP_MARKER) {
             // Build a single convex rigid collider from the visible mesh in root-bone space.
             // Other bones retain their local pose; the complete limb moves as one prop.

@@ -49,6 +49,8 @@ int RD_CreateProp(int entity, float token, int count, const rd_bone *bones,
     const float *velocity, const float *angularDegrees);
 int RD_SelfCollisionPairs(int entity);
 float RD_SelfPenetration(int entity);
+void RD_FitFootHitboxes(int boneCount,const rd_bone *bones,int vertexCount,
+    const float (*vertices)[3],const unsigned char *vertexBones,int boxCount,rd_hitbox *boxes);
 void RD_Remove(int entity);
 int RD_Has(int entity, float token);
 void RD_Step(double time, float gravity);

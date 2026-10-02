@@ -21,10 +21,12 @@ static void Floor() {
     RD_BeginMesh(0); RD_AddTriangle(a,b,c); RD_AddTriangle(a,c,d); RD_EndMesh(m,0);
 }
 struct Rig {
+    struct FootVertex { int bone; float point[3]; };
     int count = 0;
     rd_bone bones[RD_MAX_BONES] = {};
     rd_matrix pose[RD_MAX_BONES] = {};
     std::vector<rd_hitbox> boxes;
+    std::vector<FootVertex> feet;
 };
 static Rig Synthetic() {
     Rig r; r.count=3;
@@ -92,7 +94,51 @@ static Rig Model(const std::string &path) {
         rd_hitbox h;h.bone=Int(d,off);h.group=Int(d,off+4);
         std::memcpy(h.mins,d.data()+off+8,12);std::memcpy(h.maxs,d.data()+off+20,12);r.boxes.push_back(h);
     }
+    const int partCount=Int(d,204),partOffset=Int(d,208);
+    for(int part=0;part<partCount;++part) {
+        const int modelOffset=Int(d,partOffset+part*76+72);
+        const int count=Int(d,modelOffset+80),weights=Int(d,modelOffset+84),vertices=Int(d,modelOffset+88);
+        Check(count>=0 && weights>=0 && vertices>=0 && size_t(weights)+count<=d.size() && size_t(vertices)+size_t(count)*12<=d.size(),"invalid mesh data");
+        const auto points=reinterpret_cast<const float (*)[3]>(d.data()+vertices);
+        const auto vertexBones=reinterpret_cast<const unsigned char *>(d.data()+weights);
+        RD_FitFootHitboxes(r.count,r.bones,count,points,vertexBones,(int)r.boxes.size(),r.boxes.data());
+        for(int vertex=0;vertex<count;++vertex) {
+            const int bone=vertexBones[vertex];
+            if(bone<r.count && std::strstr(r.bones[bone].name,"Foot")) {
+                Rig::FootVertex foot;foot.bone=bone;std::memcpy(foot.point,points[vertex],12);r.feet.push_back(foot);
+            }
+        }
+    }
     return r;
+}
+static void BootContactTests(const std::string &directory) {
+    for(const char *name:{"../allies/barney","../allies/barney_headless","dismemberment_cop_pilot"}) {
+        for(int orientation=0;orientation<3;++orientation) {
+            Floor();auto rig=Model(directory+"/"+name+".mdl");
+            Check(!rig.feet.empty(),"boot regression has no visible vertices");
+            const btTransform rotate(btQuaternion(btVector3(1,0,0),orientation*SIMD_HALF_PI),btVector3(0,0,0));
+            for(int bone=0;bone<rig.count;++bone) {
+                auto &m=rig.pose[bone];
+                btTransform t(btMatrix3x3(m[0][0],m[0][1],m[0][2],m[1][0],m[1][1],m[1][2],m[2][0],m[2][1],m[2][2]),btVector3(m[0][3],m[1][3],m[2][3]));t=rotate*t;
+                for(int row=0;row<3;++row) {for(int col=0;col<3;++col) m[row][col]=t.getBasis()[row][col];m[row][3]=t.getOrigin()[row];}
+            }
+            Create(rig);float lo[3],hi[3];RD_Bounds(1,lo,hi);
+            const float lift=std::max(0.0f,8-(lo[2]+16));
+            for(int bone=0;bone<rig.count;++bone) rig.pose[bone][2][3]+=lift;
+            RD_Remove(1);Create(rig);Step(60,20);
+            rd_matrix pose[RD_MAX_BONES];RD_Pose(1,pose,rig.count);
+            float lowest=std::numeric_limits<float>::max();
+            for(const auto &foot:rig.feet) {
+                const auto &m=pose[foot.bone];float z=m[2][3];
+                for(int axis=0;axis<3;++axis) z+=m[2][axis]*foot.point[axis];
+                lowest=std::min(lowest,z);
+            }
+            std::cout<<"Boot contact "<<name<<" orientation "<<orientation<<": lowest vertex "<<lowest<<" units\n";
+            Check(lowest>=-0.1f,"visible boot sole clips through floor");
+            Check(RD_Frozen(1),"boot contact corpse failed to settle in 20 seconds");
+        }
+    }
+    std::cout<<"PASS visible Barney/headless/pilot boot vertices above floor in three fall orientations\n";
 }
 static int Water(const float *bottom,float *surface) {
     *surface=80; return bottom[2]<80;
@@ -267,7 +313,7 @@ int main(int argc,char **argv) {
         std::cout<<"PASS duplicate death, entity reuse, gib/removal, budget, map reset, malformed hierarchy\n";
         if(argc>1) {
             int failures = 0;
-            const char *models[]={"zombie","zombie_headless","zombie2","zombie2_headless","zombie3","zombie3_headless","zombie_fresh","zombie_fresh_headless","lpzombie","lpzombie_headless","nurse","nurse_headless","nursezombie","nursezombie_headless","hgrunt","hgrunt_headless","zgrunt","zgrunt_headless","agrunt","islave","babykelly","zombiebull","hungercrab","houndeye_killfx","houndeye_headless","bullsquid","megasquid","chicken","thehand"};
+            const char *models[]={"zombie","zombie_headless","zombie2","zombie2_headless","zombie3","zombie3_headless","zombie_fresh","zombie_fresh_headless","lpzombie","lpzombie_headless","nurse","nurse_headless","nursezombie","nursezombie_headless","hgrunt","hgrunt_headless","zgrunt","zgrunt_headless","agrunt","islave","babykelly","zombiebull","hungercrab","houndeye_killfx","houndeye_headless","bullsquid","megasquid","chicken","thehand","../allies/barney","../allies/barney_headless"};
             for(const char *name:models) {
                 try {
                     Floor();auto r=Model(std::string(argv[1])+"/"+name+".mdl");Create(r);
@@ -314,6 +360,7 @@ int main(int argc,char **argv) {
             Check(RD_Frozen(1),"prone cop keeps twitching on flat ground");
             Check(RD_SelfPenetration(1)<1.0f,"prone cop separated body parts interpenetrate");
             std::cout<<"PASS falling and prone cop settling, floor contact and separated-part penetration below one unit\n";
+            BootContactTests(argv[1]);
             CrowdTest(argv[1]);
         }
         RD_Reset(); return 0;
