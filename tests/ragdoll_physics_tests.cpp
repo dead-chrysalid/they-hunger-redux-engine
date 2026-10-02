@@ -157,6 +157,14 @@ static void CrowdTest(const std::string &directory) {
     for(int i=61;i<=1200;++i) RD_Step(double(i)/60,800);
     int frozen=0; for(int i=1;i<=20;++i) frozen+=RD_Frozen(i);
     std::cout<<"Crowd: "<<frozen<<"/20 frozen, "<<RD_ActiveBodies()<<" solver bodies\n";
+    if(frozen!=20) for(int entity=1;entity<=20;++entity) if(!RD_Frozen(entity)) {
+        rd_snapshot state;RD_Capture(entity,&state);float linear=0,angular=0;int fastest=0;
+        for(int bone=0;bone<state.count;++bone) for(int axis=0;axis<3;++axis) {
+            linear=std::max(linear,std::fabs(state.linear[bone][axis]));
+            if(std::fabs(state.angular[bone][axis])>angular) { angular=std::fabs(state.angular[bone][axis]);fastest=bone; }
+        }
+        std::cout<<"  unsettled "<<entity<<": linear "<<linear<<" in/s, angular "<<angular<<" rad/s on "<<rig.bones[fastest].name<<"\n";
+    }
     Check(frozen==20 && RD_Count()==20 && !RD_ActiveBodies(),"old crowd keeps expensive dynamics bodies");
     clock=std::chrono::steady_clock::now();
     for(int i=1201;i<=1260;++i) RD_Step(double(i)/60,800);
@@ -190,10 +198,40 @@ static void DismembermentTests() {
     }
     std::cout<<"PASS lethal/active and settled corpse limb removal, hit tracing, pose continuity, duplicate cuts and restore\n";
 }
+static void PropTests() {
+    Floor();auto rig=Synthetic();
+    float points[8][3];
+    for(int i=0;i<8;++i) {
+        points[i][0]=(i&1)?7.0f:-3.0f;
+        points[i][1]=(i&2)?4.0f:-4.0f;
+        points[i][2]=(i&4)?1.0f:-31.0f;
+    }
+    float velocity[3]={160,25,100},angular[3]={120,90,30};
+    Check(RD_CreateProp(1,1,rig.count,rig.bones,rig.pose,8,points,velocity,angular),"prop creation failed");
+    Check(RD_BodyCount(1)==1 && !RD_SelfCollisionPairs(1),"prop is not a single rigid collider");
+    Step(60,8);
+    float lo[3],hi[3];RD_Bounds(1,lo,hi);
+    Check(lo[2]>-17 && hi[2]<70,"prop penetrated floor or failed to fall");
+    Check(RD_Frozen(1),"prop failed to settle");
+    rd_matrix before[RD_MAX_BONES],after[RD_MAX_BONES];RD_Pose(1,before,rig.count);
+    for(int i=1;i<rig.count;++i) {
+        float length=0;for(int a=0;a<3;++a) length+=std::pow(before[i][a][3]-before[0][a][3],2);
+        Check(std::fabs(std::sqrt(length)-16*i)<0.001f,"prop skeleton deformed");
+    }
+    float point[3]={before[0][0][3],before[0][1][3],before[0][2][3]},kick[3]={0,180,160};
+    RD_Impulse(1,point,kick);Check(!RD_Frozen(1),"prop hit failed to wake");
+    RD_Step(8.1,800);RD_Pose(1,after,rig.count);
+    Check(std::fabs(after[0][1][3]-before[0][1][3])>1,"prop hit did not move it");
+    RD_Remove(1);Check(!RD_Count(),"prop removal leaked physics");
+    points[0][0]=std::numeric_limits<float>::quiet_NaN();
+    Check(!RD_CreateProp(1,2,rig.count,rig.bones,rig.pose,8,points,velocity,angular),"malformed prop accepted");
+    std::cout<<"PASS rigid convex prop floor contact, settling, intact skeleton, hit wake, removal and malformed input\n";
+}
 int main(int argc,char **argv) {
     try {
         StateTests();
         DismembermentTests();
+        PropTests();
         float a=Simulate(30), b=Simulate(60), c=Simulate(144);
         Check(std::fabs(a-b)<0.01f && std::fabs(a-c)<0.01f,"frame-rate-dependent simulation");
         std::cout<<"PASS fixed 120 Hz, floor collision, constrained joints, finite poses, pause\n";
@@ -230,6 +268,31 @@ int main(int argc,char **argv) {
                 }
             }
             Check(failures==0,"model suite failed");
+            Floor();auto cop=Model(std::string(argv[1])+"/dismemberment_cop_pilot.mdl");Create(cop);
+            Check(RD_SelfCollisionPairs(1)>0,"cop has no separated-limb self collisions");
+            std::cout<<"PASS cop selective self collision: "<<RD_SelfCollisionPairs(1)<<" enabled pairs\n";
+            Step(60,12);Validate(cop);
+            Check(RD_Frozen(1),"cop did not settle after falling");
+            Check(RD_SelfPenetration(1)<1.0f,"cop separated body parts interpenetrate");
+            // A captured horizontal pose near the floor must settle without
+            // relying on the old age/root-only freeze shortcuts.
+            Floor();
+            btTransform rotate(btQuaternion(btVector3(1,0,0),SIMD_HALF_PI),btVector3(0,0,0));
+            for(int bone=0;bone<cop.count;++bone) {
+                auto &m=cop.pose[bone];
+                btTransform t(btMatrix3x3(m[0][0],m[0][1],m[0][2],m[1][0],m[1][1],m[1][2],m[2][0],m[2][1],m[2][2]),
+                    btVector3(m[0][3],m[1][3],m[2][3]));t=rotate*t;
+                for(int r=0;r<3;++r) { for(int c=0;c<3;++c) m[r][c]=t.getBasis()[r][c];m[r][3]=t.getOrigin()[r]; }
+            }
+            float zero[3]={},lo[3],hi[3];
+            Check(RD_Create(1,1,cop.count,cop.bones,(int)cop.boxes.size(),cop.boxes.data(),cop.pose,zero,0),"prone cop creation failed");
+            RD_Bounds(1,lo,hi);const float lift=4-(lo[2]+16);
+            for(int bone=0;bone<cop.count;++bone) cop.pose[bone][2][3]+=lift;
+            RD_Remove(1);Check(RD_Create(1,2,cop.count,cop.bones,(int)cop.boxes.size(),cop.boxes.data(),cop.pose,zero,0),"lifted prone cop failed");
+            Step(60,12);Validate(cop);
+            Check(RD_Frozen(1),"prone cop keeps twitching on flat ground");
+            Check(RD_SelfPenetration(1)<1.0f,"prone cop separated body parts interpenetrate");
+            std::cout<<"PASS falling and prone cop settling, floor contact and separated-part penetration below one unit\n";
             CrowdTest(argv[1]);
         }
         RD_Reset(); return 0;

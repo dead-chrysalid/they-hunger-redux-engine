@@ -43,6 +43,12 @@ void RD_RemoveMesh(int key);
 int RD_Create(int entity, float token, int count, const rd_bone *bones,
     int hitboxCount, const rd_hitbox *hitboxes, const rd_matrix *pose,
     const float *velocity, int hitgroup);
+/* One rigid convex prop in the same world. Points are relative to bone zero. */
+int RD_CreateProp(int entity, float token, int count, const rd_bone *bones,
+    const rd_matrix *pose, int pointCount, const float (*points)[3],
+    const float *velocity, const float *angularDegrees);
+int RD_SelfCollisionPairs(int entity);
+float RD_SelfPenetration(int entity);
 void RD_Remove(int entity);
 int RD_Has(int entity, float token);
 void RD_Step(double time, float gravity);

@@ -30,6 +30,7 @@ void Matrix(const btTransform &t, rd_matrix m, float scale = 1) {
 struct Part {
     int bone, group;
     float radius, waterSurface = 0, waterQueryTime = -1;
+    float linearDamping=0.12f,angularDamping=0.35f;
     bool water = false;
     btTransform offset; // bone -> centre of collider
     std::unique_ptr<btCollisionShape> shape;
@@ -37,6 +38,7 @@ struct Part {
 };
 struct Doll {
     int entity, count;
+    int selfPairs = 0;
     float token, scale;
     double age = 0, stable = 0, sampleTime = 0;
     btVector3 previousPosition[RD_MAX_BODIES];
@@ -71,6 +73,8 @@ struct Physics {
         world.setGravity(btVector3(0, 0, -800 * Scale));
         world.getSolverInfo().m_numIterations = 80;
         world.getSolverInfo().m_splitImpulse = true;
+        // Correct shallow penetrations without injecting bounce into resting bodies.
+        world.getSolverInfo().m_splitImpulsePenetrationThreshold = -0.002f;
     }
     void removeDoll(size_t i) {
         if (dolls[i]->frozen) world.removeRigidBody(dolls[i]->frozenBody.get());
@@ -216,6 +220,12 @@ extern "C" int RD_Create(int entity, float token, int count, const rd_bone *bone
         else { lo[h.bone].setMin(a); hi[h.bone].setMax(b); }
         have[h.bone] = true;
     }
+    bool oversized=false;
+    for(int i=0;i<count;++i) if(have[i]) {
+        const btVector3 half=(hi[i]-lo[i])*0.5f;
+        const int axis=half.maxAxis();
+        if(std::min(half[(axis+1)%3],half[(axis+2)%3])*0.85f>0.35f) oversized=true;
+    }
     for (int i = 0; i < count; ++i) if (have[i]) {
         if (d->parts.size() == RD_MAX_BODIES) return 0;
         Part part;
@@ -230,7 +240,9 @@ extern "C" int RD_Create(int entity, float token, int count, const rd_bone *bone
         float height = std::max(0.0f, 2.0f * (half[axis] - radius));
         // Broad trunks need a contact patch rather than a single rounded
         // capsule contact (notably the enlarged megasquid torso and tail).
-        if (radius > 0.35f) {
+        const bool contactPatch=!oversized && HasName(bones[i].name,"bip01") &&
+            (HasName(bones[i].name,"spine") || HasName(bones[i].name,"pelvis") || HasName(bones[i].name,"foot"));
+        if (radius > 0.35f || contactPatch) {
             part.shape.reset(new btBoxShape(half * 0.85f));
             part.shape->setMargin(0.01f);
         } else if (axis == 0) part.shape.reset(new btCapsuleShapeX(radius, height));
@@ -241,6 +253,10 @@ extern "C" int RD_Create(int entity, float token, int count, const rd_bone *bone
         btVector3 inertia;
         part.shape->calculateLocalInertia(mass, inertia);
         btRigidBody::btRigidBodyConstructionInfo info(mass, nullptr, part.shape.get(), inertia);
+        info.m_additionalDamping=!oversized;
+        info.m_additionalDampingFactor=0.25f;
+        info.m_additionalLinearDampingThresholdSqr=0.0025f;
+        info.m_additionalAngularDampingThresholdSqr=0.01f;
         part.body.reset(new btRigidBody(info));
         part.body->setUserIndex(entity);
         part.body->setUserIndex2(group[i]);
@@ -248,7 +264,9 @@ extern "C" int RD_Create(int entity, float token, int count, const rd_bone *bone
         part.body->setWorldTransform(t);
         part.body->setInterpolationWorldTransform(t);
         part.body->setDamping(0.12f, 0.35f);
-        part.body->setFriction(0.8f); part.body->setRestitution(0.05f);
+        part.body->setFriction(oversized?0.8f:0.85f); part.body->setRestitution(oversized?0.05f:0.0f);
+        part.body->setRollingFriction(oversized?0.0f:0.025f);
+        part.body->setSpinningFriction(oversized?0.0f:0.025f);
         part.body->setSleepingThresholds(0.12f, 0.18f);
         part.body->setCcdMotionThreshold(radius * 0.5f);
         part.body->setCcdSweptSphereRadius(radius * 0.8f);
@@ -280,25 +298,108 @@ extern "C" int RD_Create(int entity, float token, int count, const rd_bone *bone
         float swing = 0.8f, twist = 0.35f;
         if (HasName(bones[child.bone].name, "spine") || HasName(bones[child.bone].name, "neck")) { swing = 0.25f; twist = 0.2f; }
         else if (HasName(bones[child.bone].name, "head")) { swing = 0.45f; twist = 0.4f; }
-        else if (HasName(bones[child.bone].name, "forearm") || HasName(bones[child.bone].name, "calf")) { swing = 1.1f; twist = 0.12f; }
-        else if (HasName(bones[child.bone].name, "upperarm") || HasName(bones[child.bone].name, "thigh")) { swing = 1.2f; twist = 0.6f; }
+        else if (HasName(bones[child.bone].name, "forearm") || HasName(bones[child.bone].name, "calf") ||
+            HasName(bones[child.bone].name,"arm2") || HasName(bones[child.bone].name,"leg1")) { swing = 1.1f; twist = 0.12f; }
+        else if (HasName(bones[child.bone].name, "upperarm") || HasName(bones[child.bone].name, "thigh") ||
+            HasName(bones[child.bone].name,"arm1")) { swing = 1.2f; twist = 0.6f; }
+        else if(HasName(bones[child.bone].name,"foot")) { swing=0.35f;twist=0.15f; }
+        else if(HasName(bones[child.bone].name,"hand")) { swing=0.4f;twist=0.25f; }
         // Oversized creature trunks/tails cannot fold onto terrain under
         // human spine limits. Give these assemblies a free ball joint.
         if (child.radius > 0.35f || parent.radius > 0.35f) { swing = 3.0f; twist = 3.0f; }
         cone->setLimit(swing, swing, twist, 0.9f, 0.3f, 1.0f);
-        cone->setDamping(0.15f);
-        // Preserve attachment points on small, closely spaced legacy spine bones.
-        cone->setParam(BT_CONSTRAINT_ERP, 0.8f);
+        cone->setDamping(oversized?0.15f:0.3f);
+        // Bullet's default axis here selects angular limit correction, not
+        // attachment correction. The old 0.8 was injecting angular energy.
+        cone->setParam(BT_CONSTRAINT_ERP, oversized ? 0.8f : 0.1f);
+        if(!oversized) for(int axis=0;axis<3;++axis) cone->setParam(BT_CONSTRAINT_ERP,0.35f,axis);
         d->joints.push_back(std::move(cone));
     }
-    // Self collision is off: legacy hitboxes overlap significantly. Other
-    // corpses and world brushes still collide.
+    // Exclude neighbouring joints and overlapping captured legacy colliders.
+    // Separated limbs still collide with the torso and each other.
+    // Oversized legacy creature hitboxes are not anatomical limbs; retain their
+    // previous collision policy until they have purpose-built physics proxies.
     for (auto &part : d->parts) p.world.addRigidBody(part.body.get(), CorpseGroup, WorldGroup | CorpseGroup);
     for (size_t i = 0; i < d->parts.size(); ++i)
-        for (size_t j = i+1; j < d->parts.size(); ++j)
-            d->parts[i].body->setIgnoreCollisionCheck(d->parts[j].body.get(), true);
+        for (size_t j = i+1; j < d->parts.size(); ++j) {
+            int a=d->parts[i].bone,b=d->parts[j].bone;
+            int distance=999;
+            for(int x=a,dx=0;x>=0;x=bones[x].parent,++dx)
+                for(int y=b,dy=0;y>=0;y=bones[y].parent,++dy)
+                    if(x==y) distance=std::min(distance,dx+dy);
+            struct Overlap : btCollisionWorld::ContactResultCallback {
+                bool penetrating=false;
+                btScalar addSingleResult(btManifoldPoint &point,const btCollisionObjectWrapper *,int,int,
+                    const btCollisionObjectWrapper *,int,int) override {
+                    if(point.getDistance() < -0.003f) penetrating=true;
+                    return 0;
+                }
+            } overlap;
+            p.world.contactPairTest(d->parts[i].body.get(),d->parts[j].body.get(),overlap);
+            const int groupA=d->parts[i].group,groupB=d->parts[j].group;
+            const bool torsoA=groupA==2 || groupA==3,torsoB=groupB==2 || groupB==3;
+            // Legacy spine segments and each limb's internal hitboxes form
+            // one anatomical region. Their constraints cannot resolve contacts
+            // inside that region; cross-region limb/torso contacts remain active.
+            const bool sameRegion=(groupA>0 && groupA==groupB) || (torsoA && torsoB) ||
+                (groupA==1 && groupB==2) || (groupB==1 && groupA==2);
+            if(oversized || sameRegion || distance<=2 || overlap.penetrating)
+                d->parts[i].body->setIgnoreCollisionCheck(d->parts[j].body.get(), true);
+            else ++d->selfPairs;
+        }
     for (auto &j : d->joints) p.world.addConstraint(j.get(), true);
     p.dolls.push_back(std::move(d));
+    return 1;
+}
+extern "C" int RD_SelfCollisionPairs(int entity) {
+    Doll *d=physics?physics->find(entity):nullptr;return d?d->selfPairs:0;
+}
+extern "C" float RD_SelfPenetration(int entity) {
+    Doll *d=physics?physics->find(entity):nullptr;if(!d) return 0;
+    struct Depth : btCollisionWorld::ContactResultCallback {
+        float deepest=0;
+        btScalar addSingleResult(btManifoldPoint &point,const btCollisionObjectWrapper *,int,int,
+            const btCollisionObjectWrapper *,int,int) override {
+            deepest=std::max(deepest,float(-point.getDistance()/Scale));return 0;
+        }
+    } depth;
+    for(size_t i=0;i<d->parts.size();++i) for(size_t j=i+1;j<d->parts.size();++j) {
+        auto *a=d->parts[i].body.get(),*b=d->parts[j].body.get();
+        if(a->checkCollideWith(b) && b->checkCollideWith(a)) physics->world.contactPairTest(a,b,depth);
+    }
+    return depth.deepest;
+}
+extern "C" int RD_CreateProp(int entity,float token,int count,const rd_bone *bones,
+    const rd_matrix *pose,int pointCount,const float (*points)[3],
+    const float *velocity,const float *angularDegrees) {
+    if(!points || pointCount<4 || pointCount>8192 || !angularDegrees) return 0;
+    rd_hitbox box={};box.bone=0;box.group=0;
+    for(int a=0;a<3;++a) {
+        if(!std::isfinite(angularDegrees[a])) return 0;
+        box.mins[a]=box.maxs[a]=points[0][a];
+    }
+    for(int i=0;i<pointCount;++i) for(int a=0;a<3;++a) {
+        if(!std::isfinite(points[i][a])) return 0;
+        box.mins[a]=std::min(box.mins[a],points[i][a]);
+        box.maxs[a]=std::max(box.maxs[a],points[i][a]);
+    }
+    if(RD_Has(entity,token)) return 1;
+    if(!RD_Create(entity,token,count,bones,1,&box,pose,velocity,0)) return 0;
+    auto &p=*physics;auto &part=p.find(entity)->parts[0];
+    p.world.removeRigidBody(part.body.get());
+    std::unique_ptr<btConvexHullShape> hull(new btConvexHullShape);
+    const btVector3 centre=part.offset.getOrigin();
+    for(int i=0;i<pointCount;++i) hull->addPoint(Vec(points[i])-centre,false);
+    hull->recalcLocalAabb();hull->optimizeConvexHull();hull->setMargin(0.005f);
+    part.body->setCollisionShape(hull.get());part.shape=std::move(hull);
+    const float mass=4.0f;btVector3 inertia;part.shape->calculateLocalInertia(mass,inertia);
+    part.body->setMassProps(mass,inertia);part.body->updateInertiaTensor();
+    part.body->setAngularVelocity(btVector3(angularDegrees[0],angularDegrees[1],angularDegrees[2])*(SIMD_PI/180));
+    part.body->setDamping(0.04f,0.12f);
+    part.linearDamping=0.04f;part.angularDamping=0.12f;
+    part.body->setSleepingThresholds(0.05f,0.08f);
+    // No actor/player bodies enter this world: props touch world brushes and corpses only.
+    p.world.addRigidBody(part.body.get(),CorpseGroup,WorldGroup|CorpseGroup);
     return 1;
 }
 extern "C" void RD_Step(double time, float gravity) {
@@ -324,21 +425,19 @@ extern "C" void RD_Step(double time, float gravity) {
             d->age += step; d->poseDirty = d->boundsDirty = true;
             d->sampleTime += step;
             if (d->sampleTime >= 0.25) {
-                bool quiet = true, almostQuiet = true;
-                const bool rootQuiet = (d->parts[0].body->getWorldTransform().getOrigin()-d->previousPosition[0]).length2()<0.0016f;
+                bool quiet = true;
                 for (size_t i=0; i<d->parts.size(); ++i) {
                     const auto &t = d->parts[i].body->getWorldTransform();
                     const float travel = (t.getOrigin()-d->previousPosition[i]).length2();
                     const float rotation = std::fabs(t.getRotation().dot(d->previousRotation[i]));
-                    if (travel > 0.0004f || rotation < 0.9987f) quiet = false;
-                    if (travel > 0.0036f) almostQuiet = false;
+                    if (travel > 0.000025f || rotation < 0.99996f) quiet = false;
                     d->previousPosition[i]=t.getOrigin(); d->previousRotation[i]=t.getRotation();
                 }
                 // Constraint correction can leave nonzero velocities on a
                 // visibly settled legacy rig. Measure actual pose motion.
-                d->stable = quiet || (d->age>8 && almostQuiet) || (d->age>12 && rootQuiet) ? d->stable+d->sampleTime : 0;
+                d->stable = quiet ? d->stable+d->sampleTime : 0;
                 d->sampleTime=0;
-                if(d->age>2 && d->stable>0.75) Freeze(*d);
+                if(d->age>2 && d->stable>1.0) Freeze(*d);
             }
         }
         p.accumulator -= step;
@@ -445,7 +544,7 @@ static void Buoyancy(Doll &d, float gravity, float dt) {
                 b.getWorldTransform().getOrigin().y()/Scale,lo.z()/Scale+0.1f};
             p.water = waterQuery(bottom,&p.waterSurface)!=0;
             p.waterQueryTime = (float)d.age;
-            b.setDamping(p.water?0.55f:0.12f,p.water?0.65f:0.35f);
+            b.setDamping(p.water?0.55f:p.linearDamping,p.water?0.65f:p.angularDamping);
         }
         if (!p.water) continue;
         const float fraction = std::max(0.0f,std::min(1.0f,
