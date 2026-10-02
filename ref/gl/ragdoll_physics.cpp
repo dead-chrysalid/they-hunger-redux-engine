@@ -41,6 +41,7 @@ struct Doll {
     int selfPairs = 0;
     float token, scale;
     double age = 0, stable = 0, sampleTime = 0;
+    double activeTime = 0; // Continuous solver time; hits cannot postpone the safety limit.
     btVector3 previousPosition[RD_MAX_BODIES];
     btQuaternion previousRotation[RD_MAX_BODIES];
     bool frozen = false, poseDirty = true, boundsDirty = true;
@@ -242,8 +243,11 @@ extern "C" int RD_Create(int entity, float token, int count, const rd_bone *bone
         // capsule contact (notably the enlarged megasquid torso and tail).
         const bool contactPatch=!oversized && HasName(bones[i].name,"bip01") &&
             (HasName(bones[i].name,"spine") || HasName(bones[i].name,"pelvis") || HasName(bones[i].name,"foot"));
+        const bool footPatch=contactPatch && HasName(bones[i].name,"foot");
         if (radius > 0.35f || contactPatch) {
-            part.shape.reset(new btBoxShape(half * 0.85f));
+            // Feet need nearly the authored sole/toe extent, rather than the
+            // 15-percent shrink used on overlapping torso hitboxes.
+            part.shape.reset(new btBoxShape(half * (footPatch?0.95f:0.85f)));
             part.shape->setMargin(0.01f);
         } else if (axis == 0) part.shape.reset(new btCapsuleShapeX(radius, height));
         else if (axis == 2) part.shape.reset(new btCapsuleShapeZ(radius, height));
@@ -268,8 +272,8 @@ extern "C" int RD_Create(int entity, float token, int count, const rd_bone *bone
         part.body->setRollingFriction(oversized?0.0f:0.025f);
         part.body->setSpinningFriction(oversized?0.0f:0.025f);
         part.body->setSleepingThresholds(0.12f, 0.18f);
-        part.body->setCcdMotionThreshold(radius * 0.5f);
-        part.body->setCcdSweptSphereRadius(radius * 0.8f);
+        part.body->setCcdMotionThreshold(footPatch?0.005f:radius * 0.5f);
+        part.body->setCcdSweptSphereRadius(footPatch?std::min(half.x(),std::min(half.y(),half.z()))*0.85f:radius * 0.8f);
         btVector3 v = Vec(velocity);
         if (v.length() > 15) v *= 15 / v.length();
         part.body->setLinearVelocity(v);
@@ -423,6 +427,8 @@ extern "C" void RD_Step(double time, float gravity) {
         p.world.stepSimulation((btScalar)step, 0);
         for (auto &d : p.dolls) if (!d->frozen) {
             d->age += step; d->poseDirty = d->boundsDirty = true;
+            d->activeTime += step;
+            if(d->activeTime>=60.0) { Freeze(*d);continue; }
             d->sampleTime += step;
             if (d->sampleTime >= 0.25) {
                 bool quiet = true;
@@ -528,6 +534,7 @@ static void Wake(Doll &d) {
     }
     for (auto &j : d.joints) physics->world.addConstraint(j.get(),true);
     d.frozen = false; d.age = d.stable = d.sampleTime = 0;
+    d.activeTime=0;
     for(size_t i=0;i<d.parts.size();++i) {
         d.previousPosition[i]=d.parts[i].body->getWorldTransform().getOrigin();
         d.previousRotation[i]=d.parts[i].body->getWorldTransform().getRotation();

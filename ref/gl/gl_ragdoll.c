@@ -50,7 +50,7 @@ int EXPORT Ragdoll_Bone(int entity,int bone,float *origin,float *angles) {
     cl_entity_t *e=gEngfuncs.GetEntityByIndex(entity);
     studiohdr_t *h;
     if(!enabled || !enabled->value || !mapReady || !ENGINE_GET_PARM(PARM_LOCAL_GAME) ||
-        !e || !e->model || e->curstate.iuser4!=RD_MARKER || !e->curstate.iuser3 || !RD_Has(entity,e->curstate.fuser4)) return 0;
+        !R_PhysicsEntity(e) || !e->model || !e->curstate.iuser3 || !RD_Has(entity,e->curstate.fuser4)) return 0;
     h=(studiohdr_t *)gEngfuncs.Mod_Extradata(mod_studio,e->model);
     if(!h || bone<0 || bone>=h->numbones || h->numbones>RD_MAX_BONES || !RD_Pose(entity,pose,h->numbones)) return 0;
     if(origin) Matrix3x4_OriginFromMatrix(pose[bone],origin);

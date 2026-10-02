@@ -227,11 +227,32 @@ static void PropTests() {
     Check(!RD_CreateProp(1,2,rig.count,rig.bones,rig.pose,8,points,velocity,angular),"malformed prop accepted");
     std::cout<<"PASS rigid convex prop floor contact, settling, intact skeleton, hit wake, removal and malformed input\n";
 }
+static void TimeoutTests() {
+    RD_Reset();auto rig=Synthetic();Create(rig);RD_Step(0,0);
+    // Keep the assembly active without floor contacts. Repeated damage used
+    // to reset its settling age, but must not bypass the hard solver timeout.
+    for(int tick=1;tick<=7205;++tick) {
+        if(tick%30==0 && tick<7200) {
+            rd_snapshot state;Check(RD_Capture(1,&state),"timeout snapshot missing");
+            float point[3]={state.pose[0][0][3],state.pose[0][1][3],state.pose[0][2][3]};
+            float kick[3]={0,(tick%60)?120.0f:-120.0f,0};RD_Impulse(1,point,kick);
+        }
+        RD_Step(double(tick)/120,0);
+        if(tick==7199) Check(!RD_Frozen(1),"hard timeout fired before 60 seconds");
+    }
+    Check(RD_Frozen(1) && !RD_ActiveBodies(),"unsettled corpse bypassed 60-second safety timeout");
+    rd_snapshot state;RD_Capture(1,&state);
+    float point[3]={state.pose[0][0][3],state.pose[0][1][3],state.pose[0][2][3]},kick[3]={0,120,40};
+    RD_Impulse(1,point,kick);Check(!RD_Frozen(1),"timed-out corpse cannot wake on a later hit");
+    RD_Step(60.1,0);Check(!RD_Frozen(1),"woken corpse retained an expired timeout");
+    std::cout<<"PASS 60-second hard settling timeout despite repeated impulses, and wake/reset after timeout\n";
+}
 int main(int argc,char **argv) {
     try {
         StateTests();
         DismembermentTests();
         PropTests();
+        TimeoutTests();
         float a=Simulate(30), b=Simulate(60), c=Simulate(144);
         Check(std::fabs(a-b)<0.01f && std::fabs(a-c)<0.01f,"frame-rate-dependent simulation");
         std::cout<<"PASS fixed 120 Hz, floor collision, constrained joints, finite poses, pause\n";
