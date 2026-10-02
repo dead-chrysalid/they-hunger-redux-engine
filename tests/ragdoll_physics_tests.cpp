@@ -163,9 +163,37 @@ static void CrowdTest(const std::string &directory) {
     auto idle=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-clock).count();
     std::cout<<"PASS 20 persistent corpses: active simulation "<<active<<" ms / 60 frames, settled "<<idle<<" ms / 60 frames\n";
 }
+static void DismembermentTests() {
+    for(int frozen=0;frozen<2;++frozen) {
+        Floor(); auto rig=Synthetic();rig.boxes.back().group=4;
+        Create(rig);
+        if(frozen) { Step(60,8);Check(RD_Frozen(1),"dismemberment test corpse did not settle"); }
+        rd_snapshot before;Check(RD_Capture(1,&before),"pre-cut pose missing");
+        float start[3],end[3],direction[3];float length=0;
+        for(int a=0;a<3;++a) { direction[a]=before.pose[2][a][3]-before.pose[1][a][3];length+=direction[a]*direction[a]; }
+        length=std::sqrt(length);
+        for(int a=0;a<3;++a) { end[a]=before.pose[2][a][3];start[a]=end[a]+direction[a]*30/length; }
+        rd_hit hit;
+        Check(RD_Trace(start,end,1,&hit) && hit.group==4,"arm collider not hittable before cut");
+        Check(RD_RemoveGroup(1,4)==1 && RD_BodyCount(1)==2,"cut did not remove exactly the arm collider");
+        Check(RD_RemoveGroup(1,4)==0,"repeated cut changed corpse");
+        Check(!RD_Trace(start,end,1,&hit) || hit.group!=4,"detached arm still catches rays");
+        rd_snapshot after;Check(RD_Capture(1,&after),"post-cut pose missing");
+        for(int b=0;b<rig.count;++b) for(int r=0;r<3;++r) for(int c=0;c<4;++c)
+            Check(std::fabs(before.pose[b][r][c]-after.pose[b][r][c])<0.001f,"cut reset the corpse pose");
+        Check(RD_Frozen(1)==frozen,"cut changed settled/active state");
+        Check(!RD_RemoveGroup(1,0) && !RD_RemoveGroup(99,4),"invalid cut accepted");
+        // Saved snapshots restore the pose before the bodygroup removes colliders.
+        RD_Remove(1);
+        Check(RD_Restore(1,2,rig.bones,(int)rig.boxes.size(),rig.boxes.data(),&after),"cut corpse restore failed");
+        Check(RD_RemoveGroup(1,4)==1,"restored missing arm regained colliders");
+    }
+    std::cout<<"PASS lethal/active and settled corpse limb removal, hit tracing, pose continuity, duplicate cuts and restore\n";
+}
 int main(int argc,char **argv) {
     try {
         StateTests();
+        DismembermentTests();
         float a=Simulate(30), b=Simulate(60), c=Simulate(144);
         Check(std::fabs(a-b)<0.01f && std::fabs(a-c)<0.01f,"frame-rate-dependent simulation");
         std::cout<<"PASS fixed 120 Hz, floor collision, constrained joints, finite poses, pause\n";

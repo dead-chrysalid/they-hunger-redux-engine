@@ -31,6 +31,7 @@ int RD_Restore(int entity, float token, const rd_bone *bones,
 void RD_RestoreLegacy(int entity);
 int RD_Trace(const float *start, const float *end, float limit, rd_hit *hit);
 void RD_Impulse(int entity, const float *point, const float *impulse);
+int RD_RemoveGroup(int entity, int group);
 int RD_Frozen(int entity);
 int RD_ActiveBodies(void);
 void RD_Reset(void);

@@ -29,6 +29,30 @@ static rd_record restored[RD_MAX_CORPSES];
 static int restoredCount;
 static char restoredMap[MAX_QPATH];
 static int R_RagdollWater(const float *bottom, float *surface);
+static int R_RagdollMissingArm(cl_entity_t *e) {
+    return e && e->model && e->curstate.body==1 &&
+        !Q_strcmp(e->model->name,"models/characters/enemies/dismemberment_cop_pilot.mdl");
+}
+static void R_RagdollRemoveGroup(void) {
+    if(enabled && enabled->value && ENGINE_GET_PARM(PARM_LOCAL_GAME) && gEngfuncs.Cmd_Argc()==2) {
+        int entity=Q_atoi(gEngfuncs.Cmd_Argv(1));
+        cl_entity_t *e=gEngfuncs.GetEntityByIndex(entity);
+        if(e && e->curstate.iuser4==RD_MARKER && e->curstate.iuser3 && e->model &&
+            !Q_strcmp(e->model->name,"models/characters/enemies/dismemberment_cop_pilot.mdl")) RD_RemoveGroup(entity,4);
+    }
+}
+int EXPORT Ragdoll_Bone(int entity,int bone,float *origin,float *angles) {
+    matrix3x4 pose[RD_MAX_BONES];
+    cl_entity_t *e=gEngfuncs.GetEntityByIndex(entity);
+    studiohdr_t *h;
+    if(!enabled || !enabled->value || !mapReady || !ENGINE_GET_PARM(PARM_LOCAL_GAME) ||
+        !e || !e->model || e->curstate.iuser4!=RD_MARKER || !e->curstate.iuser3 || !RD_Has(entity,e->curstate.fuser4)) return 0;
+    h=(studiohdr_t *)gEngfuncs.Mod_Extradata(mod_studio,e->model);
+    if(!h || bone<0 || bone>=h->numbones || h->numbones>RD_MAX_BONES || !RD_Pose(entity,pose,h->numbones)) return 0;
+    if(origin) Matrix3x4_OriginFromMatrix(pose[bone],origin);
+    if(angles) Matrix3x4_AnglesFromMatrix(pose[bone],angles);
+    return 1;
+}
 static unsigned int R_RagdollRig(studiohdr_t *header) {
     unsigned int hash = 2166136261u;
     int i;
@@ -129,6 +153,7 @@ void R_RagdollInit(void) {
         debug = gEngfuncs.Cvar_Get("cl_ragdoll_debug", "0", 0, "Log ragdoll creation and collider counts");
         gEngfuncs.Cmd_AddCommand("ragdoll_status", R_RagdollStatus, "Report corpse physics bodies and joint error");
         gEngfuncs.Cmd_AddCommand("ragdoll_impulse",R_RagdollImpulse,"Apply a local corpse hit impulse");
+        gEngfuncs.Cmd_AddCommand("ragdoll_remove_arm",R_RagdollRemoveGroup,"Remove cop pilot arm colliders");
         registered = 1;
     }
 }
@@ -151,7 +176,7 @@ void R_RagdollNewMap(void) {
 void R_RagdollShutdown(void) {
     RD_Reset(); mapReady = 0;
     memset(poses, 0, sizeof(poses)); memset(brushes, 0, sizeof(brushes));
-    if (registered) { gEngfuncs.Cmd_RemoveCommand("ragdoll_status"); gEngfuncs.Cmd_RemoveCommand("ragdoll_impulse"); }
+    if (registered) { gEngfuncs.Cmd_RemoveCommand("ragdoll_status"); gEngfuncs.Cmd_RemoveCommand("ragdoll_impulse"); gEngfuncs.Cmd_RemoveCommand("ragdoll_remove_arm"); }
     restoredCount=0; restoredMap[0]=0;
     registered = 0; enabled = debug = NULL;
 }
@@ -198,6 +223,8 @@ void R_RagdollFrame(void) {
             RD_Remove(poses[i].entity); memset(&poses[i], 0, sizeof(poses[i]));
         }
     }
+    for(i=0;i<RD_POSE_CACHE;++i) if(poses[i].entity && R_RagdollMissingArm(gEngfuncs.GetEntityByIndex(poses[i].entity)))
+        RD_RemoveGroup(poses[i].entity,4);
     RD_Step(gpGlobals->time, gEngfuncs.pfnGetMoveVars()->gravity);
 }
 static rd_cache *R_RagdollCache(cl_entity_t *e) {
@@ -270,6 +297,7 @@ void R_RagdollBones(cl_entity_t *e, studiohdr_t *header, matrix3x4 *pose) {
         cache->entity = e->index; cache->model = e->model; cache->count = header->numbones;
         if (debug->value) gEngfuncs.Con_Printf("Ragdoll created: entity %d model %s, %d bodies\n", e->index, e->model->name, RD_BodyCount(e->index));
     }
+    if(R_RagdollMissingArm(e)) RD_RemoveGroup(e->index,4);
     RD_Pose(e->index, pose, header->numbones);
 }
 int R_RagdollBounds(cl_entity_t *e, vec3_t mins, vec3_t maxs) {

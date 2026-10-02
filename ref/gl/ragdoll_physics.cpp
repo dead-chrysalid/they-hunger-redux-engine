@@ -459,6 +459,36 @@ static void Buoyancy(Doll &d, float gravity, float dt) {
 extern "C" int RD_Frozen(int entity) {
     Doll *d=physics?physics->find(entity):nullptr; return d && d->frozen;
 }
+extern "C" int RD_RemoveGroup(int entity, int group) {
+    Doll *d=physics?physics->find(entity):nullptr;
+    if (!d || group<=0) return 0;
+    int removed=0;
+    for(auto &p:d->parts) if(p.group==group) ++removed;
+    if (!removed || removed==(int)d->parts.size()) return 0;
+    rd_matrix pose[RD_MAX_BONES]; RD_Pose(entity,pose,d->count);
+    const bool frozen=d->frozen;
+    Wake(*d);
+    // Constraints must leave the world before either connected body is freed.
+    for(auto it=d->joints.begin();it!=d->joints.end();) {
+        bool cut=false;
+        for(auto &p:d->parts) if(p.group==group &&
+            (&(*it)->getRigidBodyA()==p.body.get() || &(*it)->getRigidBodyB()==p.body.get())) cut=true;
+        if(cut) { physics->world.removeConstraint(it->get()); it=d->joints.erase(it); }
+        else ++it;
+    }
+    for(auto it=d->parts.begin();it!=d->parts.end();) {
+        if(it->group==group) {
+            const int bone=it->bone, parent=d->parent[bone];
+            d->local[bone]=parent<0?Transform(pose[bone]):Transform(pose[parent]).inverse()*Transform(pose[bone]);
+            physics->world.removeRigidBody(it->body.get()); it=d->parts.erase(it);
+        } else ++it;
+    }
+    std::fill(d->part,d->part+d->count,-1);
+    for(size_t i=0;i<d->parts.size();++i) d->part[d->parts[i].bone]=(int)i;
+    d->poseDirty=d->boundsDirty=true;
+    if(frozen) Freeze(*d);
+    return removed;
+}
 extern "C" int RD_ActiveBodies(void) {
     int count=0; if(physics) for(auto &d:physics->dolls) if(!d->frozen) count+=(int)d->parts.size(); return count;
 }

@@ -28,6 +28,7 @@ struct ref_state_s
 	HINSTANCE hInstance;
 	ref_interface_t dllFuncs;
     rd_trace_export ragdollTrace;
+    rd_bone_export ragdollBone;
     rd_save_export ragdollSave;
     rd_load_export ragdollLoad;
 

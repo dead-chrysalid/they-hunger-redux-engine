@@ -543,6 +543,7 @@ static qboolean R_LoadProgs( const char *name )
 	ref.initialized = true;
     // Optional SP companion exports; public renderer API 4 remains unchanged.
     ref.ragdollTrace = (rd_trace_export)COM_GetProcAddress(ref.hInstance, "Ragdoll_Trace");
+    ref.ragdollBone = (rd_bone_export)COM_GetProcAddress(ref.hInstance, "Ragdoll_Bone");
     ref.ragdollSave = (rd_save_export)COM_GetProcAddress(ref.hInstance, "Ragdoll_Save");
     ref.ragdollLoad = (rd_load_export)COM_GetProcAddress(ref.hInstance, "Ragdoll_Load");
 

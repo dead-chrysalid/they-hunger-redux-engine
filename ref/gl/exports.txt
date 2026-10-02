@@ -3,3 +3,4 @@ GetRefHumanReadableName
 Ragdoll_Trace
 Ragdoll_Save
 Ragdoll_Load
+Ragdoll_Bone
