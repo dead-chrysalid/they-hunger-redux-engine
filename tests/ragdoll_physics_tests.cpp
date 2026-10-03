@@ -502,10 +502,14 @@ static void ExplosionTests() {
     Create(rig,2,1);Step(60,8);
     Check(RD_Frozen(1) && RD_Frozen(2),"blast targets failed to settle");
     rd_matrix before[RD_MAX_BONES],after[RD_MAX_BONES];RD_Pose(1,before,rig.count);
-    float source[3]={-50,0,8};RD_Blast(source,200,400);
+    rd_matrix corpseBefore[RD_MAX_BONES];RD_Pose(2,corpseBefore,rig.count);
+    float source[3]={-50,0,8};RD_Blast(source,200,1200);
     Check(!RD_Frozen(1) && !RD_Frozen(2),"blast did not wake prop and corpse");
     for(int i=1;i<=24;++i)RD_Step(8+double(i)/120,800);
     RD_Pose(1,after,rig.count);Check(after[0][0][3]>before[0][0][3]+10,"blast did not push part outward");
+    RD_Pose(2,after,rig.count);
+    Check(after[0][0][3]>corpseBefore[0][0][3]+50,"strong blast barely moved a settled corpse");
+    Check(after[0][2][3]>corpseBefore[0][2][3]+30,"strong blast failed to launch a settled corpse off the floor");
     Floor();Check(RD_CreateProp(1,1,rig.count,rig.bones,rig.pose,8,points,zero,zero),"occluded blast prop creation failed");
     Step(60,8);rd_matrix wall;Identity(wall);
     float a[3]={-20,-100,0},b[3]={-20,100,0},c[3]={-20,100,200},d[3]={-20,-100,200};
@@ -528,10 +532,16 @@ static void GrenadeModelTest(const std::string &directory) {
     }
     std::vector<float> flat;for(const auto &v:points)for(int a=0;a<3;++a)flat.push_back(v[a]);
     const auto vertices=reinterpret_cast<const float (*)[3]>(flat.data());
-    float velocity[3]={200,0,0},angular[3]={180,120,240};Floor();
+    float velocity[3]={200,0,0},angular[3]={180,120,240},zero[3]={};Floor();
     Check(RD_CreateGrenade(1,1,rig.count,rig.bones,rig.pose,(int)points.size(),vertices,velocity,angular),"authored grenade creation failed");
-    RD_Step(0,800);bool bounced=false;
-    for(int i=1;i<=180;++i) {
+    RD_Step(0,800);float target[3]={0,0,80},turn[3]={0,0,30};
+    Check(RD_HoldProp(1,1,target),"physical grenade cannot be carried");
+    Check(RD_RotateHeld(1,1,turn),"held grenade cannot be rotated");
+    RD_Step(1.0/120,800);
+    Check(RD_ThrowProp(1,1,zero),"held grenade cannot be dropped");
+    Check(RD_HoldProp(1,1,target) && RD_ThrowProp(1,1,velocity),"grenade cannot be picked up and rethrown");
+    bool bounced=false;
+    for(int i=2;i<=180;++i) {
         RD_Step(double(i)/120,800);rd_snapshot state;Check(RD_Capture(1,&state),"grenade physics state missing");
         for(int a=0;a<3;++a)Check(std::isfinite(state.linear[0][a]),"grenade velocity became nonfinite");
         if(i>40 && state.linear[0][2]>20)bounced=true;

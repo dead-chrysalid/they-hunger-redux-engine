@@ -518,7 +518,7 @@ extern "C" void RD_Blast(const float *origin,float radius,float strength) {
     if(!physics || !origin || !std::isfinite(radius) || radius<=0 || !std::isfinite(strength) || strength<=0)return;
     for(int a=0;a<3;++a)if(!std::isfinite(origin[a]))return;
     auto &p=*physics;const btVector3 source=Vec(origin);const btScalar reach=radius*Scale;
-    strength=std::min(600.0f,strength);
+    strength=std::min(1800.0f,strength);
     for(auto &d:p.dolls) {
         if(d->held)continue;
         float lo[3],hi[3];if(!RD_Bounds(d->entity,lo,hi))continue;
@@ -535,8 +535,8 @@ extern "C" void RD_Blast(const float *origin,float radius,float strength) {
             auto &body=*part.body;btVector3 outward=body.getWorldTransform().getOrigin()-source;
             const btScalar distance=outward.length();if(distance>=reach)continue;
             outward=distance>0.001f?outward/distance:btVector3(0,0,1);
-            outward.setZ(std::max(btScalar(0.25f),outward.z()));outward.normalize();
-            const btVector3 kick=outward*(strength*Scale*(1-distance/reach));
+            outward.setZ(std::max(btScalar(0.65f),outward.z()));outward.normalize();
+            const btVector3 kick=outward*(strength*Scale*std::sqrt(1-distance/reach));
             body.applyCentralImpulse(kick/body.getInvMass());body.activate(true);
         }
     }
@@ -613,7 +613,7 @@ extern "C" void RD_Step(double time, float gravity) {
                         d->age=d->stable=d->activeTime=0;
                     }
                 }
-                if(!d->held && d->prop)d->parts[0].body->setCcdMotionThreshold(0);
+                if(!d->held && d->prop)d->parts[0].body->setCcdMotionThreshold(d->grenade?0.01f:0);
             }
             for(auto &part:d->parts) if(part.fittedBoot) part.stepStart=part.body->getWorldTransform();
         }
@@ -815,7 +815,7 @@ extern "C" int RD_ThrowProp(int entity,float token,const float *velocity) {
     if(!d || d->parts.empty() || d->token!=token || !velocity)return 0;
     for(int i=0;i<3;++i)if(!std::isfinite(velocity[i]))return 0;
     d->held=false;Wake(*d);d->age=d->stable=d->activeTime=0;
-    if(d->prop)d->parts[0].body->setCcdMotionThreshold(0);
+    if(d->prop)d->parts[0].body->setCcdMotionThreshold(d->grenade?0.01f:0);
     btVector3 v=Vec(velocity);if(v.length()>16)v*=16/v.length();
     for(auto &part:d->parts) {
         if(!v.fuzzyZero())part.body->setRestitution(0.3f);
