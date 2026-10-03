@@ -432,8 +432,6 @@ extern "C" int RD_CreateProp(int entity,float token,int count,const rd_bone *bon
     part.body->setDamping(0.04f,0.12f);
     part.linearDamping=0.04f;part.angularDamping=0.12f;
     part.body->setSleepingThresholds(0.05f,0.08f);
-    part.body->setCcdMotionThreshold(0.01f);
-    part.body->setCcdSweptSphereRadius(0.025f);
     // No actor/player bodies enter this world: props touch world brushes and corpses only.
     p.world.addRigidBody(part.body.get(),CorpseGroup,WorldGroup|CorpseGroup);
     return 1;
@@ -478,6 +476,7 @@ extern "C" void RD_Step(double time, float gravity) {
                         body.activate(true);d->age=d->stable=d->activeTime=0;
                     }
                 }
+                if(!d->held)d->parts[0].body->setCcdMotionThreshold(0);
             }
             for(auto &part:d->parts) if(part.fittedBoot) part.stepStart=part.body->getWorldTransform();
         }
@@ -635,6 +634,8 @@ extern "C" int RD_HoldProp(int entity,float token,const float *target) {
     if(!d || !d->prop || d->token!=token || !target)return 0;
     for(int i=0;i<3;++i)if(!std::isfinite(target[i]))return 0;
     Wake(*d);d->held=true;d->holdTarget=Vec(target);d->holdDeadline=physics->lastTime+0.25;
+    d->parts[0].body->setCcdMotionThreshold(0.01f);
+    d->parts[0].body->setCcdSweptSphereRadius(0.025f);
     return 1;
 }
 extern "C" int RD_ThrowProp(int entity,float token,const float *velocity) {
@@ -642,6 +643,7 @@ extern "C" int RD_ThrowProp(int entity,float token,const float *velocity) {
     if(!d || !d->prop || d->token!=token || !velocity)return 0;
     for(int i=0;i<3;++i)if(!std::isfinite(velocity[i]))return 0;
     d->held=false;Wake(*d);d->age=d->stable=d->activeTime=0;
+    d->parts[0].body->setCcdMotionThreshold(0);
     btVector3 v=Vec(velocity);if(v.length()>16)v*=16/v.length();
     d->parts[0].body->setLinearVelocity(v);
     d->parts[0].body->setAngularVelocity(v.fuzzyZero()?btVector3(0,0,0):btVector3(2,3,1));
