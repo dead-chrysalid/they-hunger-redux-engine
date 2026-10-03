@@ -367,12 +367,53 @@ static void TimeoutTests() {
     RD_Step(60.1,0);Check(!RD_Frozen(1),"woken corpse retained an expired timeout");
     std::cout<<"PASS 60-second hard settling timeout despite repeated impulses, and wake/reset after timeout\n";
 }
+static void DisableTests() {
+    Floor();auto rig=Synthetic();Create(rig);Step(60,0.5f);
+    rd_matrix before[RD_MAX_BONES],after[RD_MAX_BONES];RD_Pose(1,before,rig.count);
+    RD_FreezeAll(100);RD_Step(101,800);RD_Pose(1,after,rig.count);
+    Check(RD_Frozen(1) && !RD_ActiveBodies(),"disabled ragdolls retain solver bodies");
+    Check(!std::memcmp(before,after,rig.count*sizeof(rd_matrix)),"disabling ragdolls snaps the corpse pose");
+    float point[]={after[0][0][3],after[0][1][3],after[0][2][3]},kick[]={0,90,50};
+    RD_Impulse(1,point,kick);RD_Step(101.1,800);
+    Check(!RD_Frozen(1),"preserved corpse cannot wake after re-enabling");
+    std::cout<<"PASS disabling physics preserves exact poses without active bodies, and subsequent wake\n";
+}
+static void PileTest(const std::string &directory) {
+    Floor();auto source=Model(directory+"/zombie.mdl");
+    btTransform rotate(btQuaternion(btVector3(1,0,0),SIMD_HALF_PI),btVector3(0,0,0));
+    for(int n=0;n<12;++n) {
+        auto rig=source;
+        for(int i=0;i<rig.count;++i) {
+            auto &m=rig.pose[i];
+            btTransform t(btMatrix3x3(m[0][0],m[0][1],m[0][2],m[1][0],m[1][1],m[1][2],m[2][0],m[2][1],m[2][2]),btVector3(m[0][3],m[1][3],m[2][3]));
+            t=rotate*t;
+            t.getOrigin()+=btVector3((n%2)*18,100,(n/2)*20+45);
+            for(int r=0;r<3;++r) {for(int c=0;c<3;++c)m[r][c]=t.getBasis()[r][c];m[r][3]=t.getOrigin()[r];}
+        }
+        Create(rig,n+1,float(n+1));
+    }
+    auto start=std::chrono::steady_clock::now();Step(60,8);
+    double elapsed=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
+    for(int entity=1;entity<=12;++entity) {
+        rd_matrix pose[RD_MAX_BONES];float lo[3],hi[3];
+        Check(RD_Pose(entity,pose,source.count) && RD_Bounds(entity,lo,hi),"pile lost a corpse");
+        for(int b=0;b<source.count;++b) for(int r=0;r<3;++r) for(int c=0;c<4;++c) Check(std::isfinite(pose[b][r][c]),"pile has nonfinite pose");
+        Check(lo[2]>-28,"pile tunneled through floor");
+        Check(RD_JointError(entity)<2.5f,"crowd solver separated pile joints");
+    }
+    for(int tick=481;tick<=3660;++tick)RD_Step(double(tick)/60,800);
+    Check(RD_Count()==12 && !RD_ActiveBodies(),"pile does not retire solver bodies by safety timeout");
+    float point[3]={},kick[3]={0,90,45};RD_Impulse(4,point,kick);
+    Check(!RD_Frozen(4),"settled pile corpse cannot wake");
+    std::cout<<"PASS overlapping 12-corpse pile: finite poses, floor contact, joints, eventual freeze and wake; first 8 seconds "<<elapsed<<" ms\n";
+}
 int main(int argc,char **argv) {
     try {
         StateTests();
         DismembermentTests();
         PropTests();
         TimeoutTests();
+        DisableTests();
         float a=Simulate(30), b=Simulate(60), c=Simulate(144);
         Check(std::fabs(a-b)<0.01f && std::fabs(a-c)<0.01f,"frame-rate-dependent simulation");
         std::cout<<"PASS fixed 120 Hz, floor collision, constrained joints, finite poses, pause\n";
@@ -450,6 +491,7 @@ int main(int argc,char **argv) {
             std::cout<<"PASS falling and prone cop settling, floor contact and separated-part penetration below one unit\n";
             BootContactTests(argv[1]);
             CrowdTest(argv[1]);
+            PileTest(argv[1]);
         }
         RD_Reset(); return 0;
     } catch(const std::exception &e) { std::cerr<<"FAIL ragdoll physics: "<<e.what()<<"\n";RD_Reset();return 1; }

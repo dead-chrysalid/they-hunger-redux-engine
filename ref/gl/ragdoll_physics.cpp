@@ -7,6 +7,7 @@
 #include <cstring>
 #include <memory>
 #include <vector>
+#include <unordered_map>
 
 namespace {
 const float Scale = 0.0254f; // GoldSrc inch -> metre; Z stays up.
@@ -68,6 +69,7 @@ struct Physics {
     btSequentialImpulseConstraintSolver solver;
     btDiscreteDynamicsWorld world;
     std::vector<std::unique_ptr<Doll>> dolls;
+    std::unordered_map<int,Doll *> byEntity;
     std::vector<std::unique_ptr<Mesh>> meshes;
     std::unique_ptr<Mesh> pending;
     double lastTime = -1, accumulator = 0;
@@ -79,6 +81,7 @@ struct Physics {
         world.getSolverInfo().m_splitImpulsePenetrationThreshold = -0.002f;
     }
     void removeDoll(size_t i) {
+        byEntity.erase(dolls[i]->entity);
         if (dolls[i]->frozen) world.removeRigidBody(dolls[i]->frozenBody.get());
         else {
             for (auto &j : dolls[i]->joints) world.removeConstraint(j.get());
@@ -95,8 +98,8 @@ struct Physics {
         while (!meshes.empty()) removeMesh(meshes.size() - 1);
     }
     Doll *find(int entity) {
-        for (auto &d : dolls) if (d->entity == entity) return d.get();
-        return nullptr;
+        auto entry=byEntity.find(entity);
+        return entry==byEntity.end()?nullptr:entry->second;
     }
 };
 std::unique_ptr<Physics> physics;
@@ -371,6 +374,7 @@ static int CreateDoll(int entity, float token, int count, const rd_bone *bones,
             else ++d->selfPairs;
         }
     for (auto &j : d->joints) p.world.addConstraint(j.get(), true);
+    p.byEntity[d->entity]=d.get();
     p.dolls.push_back(std::move(d));
     return 1;
 }
@@ -438,12 +442,16 @@ extern "C" void RD_Step(double time, float gravity) {
     if (dt <= 0) return;
     if (!std::isfinite(gravity)) gravity = 800;
     p.world.setGravity(btVector3(0, 0, -std::max(0.0f, gravity) * Scale));
-    if (!RD_ActiveBodies()) {
+    const int activeBodies=RD_ActiveBodies();
+    if (!activeBodies) {
         p.accumulator = 0;
         for (auto &m : p.meshes) m->body->setInterpolationWorldTransform(m->body->getWorldTransform());
         return;
     }
     p.accumulator += dt;
+    // Preserve the accepted small-scene solver. Bound the repeated constraint
+    // work in crowded scenes while retaining full-rate contacts and boot CCD.
+    p.world.getSolverInfo().m_numIterations=activeBodies>240?32:activeBodies>96?48:80;
     const double step = 1.0 / 120.0;
     while (p.accumulator + 1e-9 >= step) {
         for (auto &d : p.dolls) if (!d->frozen) {
@@ -593,6 +601,11 @@ static void Wake(Doll &d) {
         d.previousPosition[i]=d.parts[i].body->getWorldTransform().getOrigin();
         d.previousRotation[i]=d.parts[i].body->getWorldTransform().getRotation();
     }
+}
+extern "C" void RD_FreezeAll(double time) {
+    if(!physics) return;
+    for(auto &d:physics->dolls) Freeze(*d);
+    physics->lastTime=time;physics->accumulator=0;
 }
 static void Buoyancy(Doll &d, float gravity, float dt) {
     (void)dt;

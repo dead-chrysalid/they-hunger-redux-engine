@@ -15,6 +15,8 @@ typedef struct {
     int entity, count;
     model_t *model;
     double time;
+    int appliedBody;
+    model_t *appliedModel;
     matrix3x4 pose[MAXSTUDIOBONES];
     vec3_t origin;
 } rd_cache;
@@ -51,9 +53,15 @@ static unsigned int R_RagdollMissingParts(cl_entity_t *e) {
             mask|=1u<<groups[i];
     return mask;
 }
-static void R_RagdollApplyMissingParts(cl_entity_t *e) {
-    unsigned int mask=R_RagdollMissingParts(e);int group;
+static void R_RagdollApplyMissingParts(cl_entity_t *e,rd_cache *cache) {
+    unsigned int mask;int group;
     if(!e) return;
+    if(!RD_Has(e->index,e->curstate.fuser4)) return;
+    // Body selectors only change on cuts. Settled piles need no repeated MDL
+    // scan or unsuccessful collider removal every frame and studio draw.
+    if(cache->appliedModel==e->model && cache->appliedBody==e->curstate.body) return;
+    cache->appliedModel=e->model;cache->appliedBody=e->curstate.body;
+    mask=R_RagdollMissingParts(e);
     for(group=1;group<=7;++group) if(mask & (1u<<group)) RD_RemoveGroup(e->index,group);
 }
 static void R_RagdollRemovePart(void) {
@@ -221,7 +229,7 @@ void R_RagdollShutdown(void) {
 void R_RagdollFrame(void) {
     int i, count;
     if (!enabled || !enabled->value) {
-        if (mapReady) { RD_Reset(); mapReady = 0; memset(poses, 0, sizeof(poses)); memset(brushes, 0, sizeof(brushes)); }
+        if (mapReady) RD_FreezeAll(gpGlobals->time);
         return;
     }
     if (!RI.drawWorld || !ENGINE_GET_PARM(PARM_LOCAL_GAME)) return;
@@ -261,7 +269,7 @@ void R_RagdollFrame(void) {
             RD_Remove(poses[i].entity); memset(&poses[i], 0, sizeof(poses[i]));
         }
     }
-    for(i=0;i<RD_POSE_CACHE;++i) if(poses[i].entity) R_RagdollApplyMissingParts(gEngfuncs.GetEntityByIndex(poses[i].entity));
+    for(i=0;i<RD_POSE_CACHE;++i) if(poses[i].entity) R_RagdollApplyMissingParts(gEngfuncs.GetEntityByIndex(poses[i].entity),&poses[i]);
     RD_Step(gpGlobals->time, gEngfuncs.pfnGetMoveVars()->gravity);
 }
 static rd_cache *R_RagdollCache(cl_entity_t *e) {
@@ -287,6 +295,7 @@ void R_RagdollBones(cl_entity_t *e, studiohdr_t *header, matrix3x4 *pose) {
         return;
     }
     if (!RD_Has(e->index, e->curstate.fuser4)) {
+        cache->appliedModel=NULL;
         rd_bone bones[RD_MAX_BONES]; rd_hitbox boxes[256];
         mstudiobone_t *mdlBones = (mstudiobone_t *)((byte *)header + header->boneindex);
         mstudiobbox_t *mdlBoxes = (mstudiobbox_t *)((byte *)header + header->hitboxindex);
@@ -372,16 +381,16 @@ void R_RagdollBones(cl_entity_t *e, studiohdr_t *header, matrix3x4 *pose) {
         cache->entity = e->index; cache->model = e->model; cache->count = header->numbones;
         if (debug->value) gEngfuncs.Con_Printf("Ragdoll created: entity %d model %s, %d bodies\n", e->index, e->model->name, RD_BodyCount(e->index));
     }
-    R_RagdollApplyMissingParts(e);
+    R_RagdollApplyMissingParts(e,cache);
     RD_Pose(e->index, pose, header->numbones);
 }
 int R_RagdollBounds(cl_entity_t *e, vec3_t mins, vec3_t maxs) {
-    return enabled && enabled->value && R_PhysicsEntity(e) && e->curstate.iuser3 &&
+    return mapReady && R_PhysicsEntity(e) && e->curstate.iuser3 &&
         RD_Has(e->index, e->curstate.fuser4) && RD_Bounds(e->index, mins, maxs);
 }
 
 int R_RagdollApplyPose(cl_entity_t *e,studiohdr_t *header,matrix3x4 *pose) {
-    return enabled && enabled->value && mapReady && R_PhysicsEntity(e) && e->curstate.iuser3 &&
+    return mapReady && R_PhysicsEntity(e) && e->curstate.iuser3 &&
         RD_Has(e->index,e->curstate.fuser4) && RD_Pose(e->index,pose,header->numbones);
 }
 static int R_RagdollWater(const float *bottom,float *surface) {
