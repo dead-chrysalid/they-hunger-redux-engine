@@ -392,8 +392,13 @@ static void CarryPartTests() {
     float bad[3]={std::numeric_limits<float>::quiet_NaN(),0,48};
     Check(!RD_HoldProp(1,9,bad),"nonfinite carry target accepted");
     for(int i=1;i<=240;++i) {
-        if(i%6==1)Check(RD_HoldProp(1,9,target),"carry command failed");
+        if(i>210)target[0]=12*std::sin(float(240-i)*0.15f);
+        if(i%6==1 || i>210)Check(RD_HoldProp(1,9,target),"carry command failed");
         RD_Step(8+double(i)/120,800);
+        if(i>210) {
+            rd_matrix tracking[RD_MAX_BONES];RD_Pose(1,tracking,rig.count);
+            Check(std::fabs(tracking[0][0][3]-target[0])<0.5f,"held prop trails camera target");
+        }
     }
     rd_matrix pose[RD_MAX_BONES];RD_Pose(1,pose,rig.count);
     Check(std::fabs(pose[0][2][3]-48)<4,"carried prop did not follow target");

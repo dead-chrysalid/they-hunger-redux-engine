@@ -432,6 +432,8 @@ extern "C" int RD_CreateProp(int entity,float token,int count,const rd_bone *bon
     part.body->setDamping(0.04f,0.12f);
     part.linearDamping=0.04f;part.angularDamping=0.12f;
     part.body->setSleepingThresholds(0.05f,0.08f);
+    part.body->setCcdMotionThreshold(0.01f);
+    part.body->setCcdSweptSphereRadius(0.025f);
     // No actor/player bodies enter this world: props touch world brushes and corpses only.
     p.world.addRigidBody(part.body.get(),CorpseGroup,WorldGroup|CorpseGroup);
     return 1;
@@ -463,16 +465,16 @@ extern "C" void RD_Step(double time, float gravity) {
                 if(time>d->holdDeadline) d->held=false;
                 else {
                     auto &part=d->parts[0];auto &body=*part.body;
-                    const btVector3 target=d->holdTarget+body.getWorldTransform().getBasis()*part.offset.getOrigin();
+                    const btVector3 target=d->holdTarget;
                     const btVector3 delta=target-body.getWorldTransform().getOrigin();
                     if(delta.length2()>std::pow(96*Scale,2)) d->held=false;
                     else {
-                        // A damped spring keeps world collision active; no teleport
-                        // through walls or rigid constraint dragging a whole corpse.
-                        btVector3 acceleration=delta*70-body.getLinearVelocity()*14+btVector3(0,0,gravity*Scale);
-                        if(acceleration.length()>120) acceleration*=120/acceleration.length();
-                        body.applyCentralForce(acceleration/body.getInvMass());
-                        body.setAngularVelocity(body.getAngularVelocity()*0.98f);
+                        // Reach the camera target in one physics tick when clear.
+                        // Contacts and CCD resolve walls before the body can move.
+                        btVector3 velocity=delta/btScalar(step);
+                        if(velocity.length()>25)velocity*=25/velocity.length();
+                        body.setLinearVelocity(velocity);
+                        body.setAngularVelocity(btVector3(0,0,0));
                         body.activate(true);d->age=d->stable=d->activeTime=0;
                     }
                 }

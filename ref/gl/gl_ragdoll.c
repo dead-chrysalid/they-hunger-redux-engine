@@ -6,6 +6,9 @@
 
 #define RD_MARKER 19780
 #define RD_PROP_MARKER 19781
+static int heldPartEntity;
+static float heldPartToken;
+static double heldPartDeadline;
 static int R_PhysicsEntity(cl_entity_t *e) {
     return e && (e->curstate.iuser4==RD_MARKER || e->curstate.iuser4==RD_PROP_MARKER);
 }
@@ -124,8 +127,14 @@ static void R_RagdollPartUse(void) {
     if(!e || e->curstate.iuser4!=RD_PROP_MARKER || !RD_CommandTokenMatches(e->curstate.fuser4,token)) return;
     token=e->curstate.fuser4;
     for(i=0;i<3;++i)vector[i]=Q_atof(gEngfuncs.Cmd_Argv(3+i));
-    if(!Q_strcmp(gEngfuncs.Cmd_Argv(0),"ragdoll_hold")) RD_HoldProp(entity,token,vector);
-    else RD_ThrowProp(entity,token,vector);
+    if(!Q_strcmp(gEngfuncs.Cmd_Argv(0),"ragdoll_hold")) {
+        if(RD_HoldProp(entity,token,vector)) {
+            heldPartEntity=entity;heldPartToken=token;heldPartDeadline=gpGlobals->time+0.25;
+        }
+    } else {
+        if(heldPartEntity==entity)heldPartEntity=0;
+        RD_ThrowProp(entity,token,vector);
+    }
 }
 int EXPORT Ragdoll_Trace(const float *start,const float *end,float limit,rd_hit *hit) {
     return enabled && enabled->value && mapReady && ENGINE_GET_PARM(PARM_LOCAL_GAME) && RD_Trace(start,end,limit,hit);
@@ -220,6 +229,7 @@ void R_RagdollInit(void) {
     }
 }
 void R_RagdollNewMap(void) {
+    heldPartEntity=0;
     matrix3x4 identity;
     RD_Reset();
     memset(poses, 0, sizeof(poses)); memset(brushes, 0, sizeof(brushes));
@@ -246,6 +256,7 @@ void R_RagdollShutdown(void) {
 void R_RagdollFrame(void) {
     int i, count;
     if (!enabled || !enabled->value) {
+        heldPartEntity=0;
         if (mapReady) RD_FreezeAll(gpGlobals->time);
         return;
     }
@@ -287,6 +298,16 @@ void R_RagdollFrame(void) {
         }
     }
     for(i=0;i<RD_POSE_CACHE;++i) if(poses[i].entity) R_RagdollApplyMissingParts(gEngfuncs.GetEntityByIndex(poses[i].entity),&poses[i]);
+    // Use the rendered camera each frame, independent of server tick latency.
+    // The server still authorizes the holder, drop/throw and loss-of-holder timeout.
+    if(heldPartEntity) {
+        if(gpGlobals->time>heldPartDeadline || !RD_Has(heldPartEntity,heldPartToken))heldPartEntity=0;
+        else {
+            vec3_t target,forward;AngleVectors(RI.viewangles,forward,NULL,NULL);
+            VectorMA(RI.vieworg,64,forward,target);
+            RD_HoldProp(heldPartEntity,heldPartToken,target);
+        }
+    }
     RD_Step(gpGlobals->time, gEngfuncs.pfnGetMoveVars()->gravity);
 }
 static rd_cache *R_RagdollCache(cl_entity_t *e) {
