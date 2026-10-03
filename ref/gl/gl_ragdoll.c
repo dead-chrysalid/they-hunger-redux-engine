@@ -9,7 +9,7 @@
 static int R_PhysicsEntity(cl_entity_t *e) {
     return e && (e->curstate.iuser4==RD_MARKER || e->curstate.iuser4==RD_PROP_MARKER);
 }
-#define RD_POSE_CACHE 128
+#define RD_POSE_CACHE 256
 #define RD_BRUSH_LIMIT 2048
 typedef struct {
     int entity, count;
@@ -151,7 +151,7 @@ void EXPORT Ragdoll_Load(const char *level,const int *remap,int count) {
 
 static void R_RagdollStatus(void) {
     int i, active = 0;
-    gEngfuncs.Con_Printf("Ragdolls: %d corpses (limit %d), enabled %d\n", RD_Count(), RD_MAX_CORPSES, enabled && enabled->value != 0);
+    gEngfuncs.Con_Printf("Ragdolls: %d corpses, %d props (limits %d/%d), enabled %d\n", RD_CorpseCount(), RD_Count()-RD_CorpseCount(), RD_MAX_CORPSES, RD_MAX_PROPS, enabled && enabled->value != 0);
     gEngfuncs.Con_Printf("  dynamics solver: %d limb bodies; settled corpses use one frozen collider each\n",RD_ActiveBodies());
     for (i = 0; i < RD_POSE_CACHE; ++i) {
         if (poses[i].entity && RD_BodyCount(poses[i].entity)) {
@@ -363,7 +363,7 @@ void R_RagdollBones(cl_entity_t *e, studiohdr_t *header, matrix3x4 *pose) {
         if (!loaded) {
             int pending=0;
             for(i=0;i<restoredCount;++i) if(restored[i].entity && !RD_BodyCount(restored[i].entity)) ++pending;
-            if(e->curstate.iuser3!=2 && RD_Count()+pending>=RD_MAX_CORPSES) return;
+            if(e->curstate.iuser3!=2 && RD_CorpseCount()+pending>=RD_MAX_CORPSES) return;
             vec3_t zero={0,0,0};
             if (!RD_Create(e->index, e->curstate.fuser4, header->numbones, bones, header->numhitboxes, boxes,
                 initial, e->curstate.iuser3==2?zero:e->curstate.vuser4, e->curstate.iuser2)) return;

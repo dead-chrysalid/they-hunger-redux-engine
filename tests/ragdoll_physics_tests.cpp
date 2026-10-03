@@ -382,9 +382,15 @@ int main(int argc,char **argv) {
         RD_Remove(1);Check(RD_Count()==0,"corpse removal failed");
         for(int i=1;i<=RD_MAX_CORPSES;++i) Create(rig,i,float(i));
         float v[3]={};Check(!RD_Create(999,1,rig.count,rig.bones,(int)rig.boxes.size(),rig.boxes.data(),rig.pose,v,0),"budget exceeded");
+        float points[8][3],angular[3]={};
+        for(int i=0;i<8;++i) {points[i][0]=(i&1)?2:-2;points[i][1]=(i&2)?2:-2;points[i][2]=(i&4)?2:-2;}
+        for(int i=0;i<RD_MAX_PROPS;++i) Check(RD_CreateProp(1000+i,1,rig.count,rig.bones,rig.pose,8,points,v,angular),"corpses consumed prop budget");
+        Check(RD_CorpseCount()==RD_MAX_CORPSES && RD_Count()==RD_MAX_CORPSES+RD_MAX_PROPS,"independent budgets incorrect");
+        Check(!RD_CreateProp(2000,1,rig.count,rig.bones,rig.pose,8,points,v,angular),"prop budget exceeded");
+        RD_Remove(1000);Check(RD_CreateProp(2000,1,rig.count,rig.bones,rig.pose,8,points,v,angular),"evicted prop capacity not reused");
         RD_Reset();Check(RD_Count()==0,"map reset leaked corpses");
         rig.bones[1].parent=2;Check(!RD_Create(1,1,rig.count,rig.bones,(int)rig.boxes.size(),rig.boxes.data(),rig.pose,v,0),"invalid hierarchy accepted");
-        std::cout<<"PASS duplicate death, entity reuse, gib/removal, budget, map reset, malformed hierarchy\n";
+        std::cout<<"PASS duplicate death, entity reuse, gib/removal, independent 64-corpse/128-prop budgets and capacity reuse, map reset, malformed hierarchy\n";
         if(argc>1) {
             ZombiePartsTests(argv[1]);
             ZombiePartsTests(argv[1],"zombie_fresh",11,1<<1);

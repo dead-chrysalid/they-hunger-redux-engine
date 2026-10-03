@@ -45,7 +45,7 @@ struct Doll {
     double activeTime = 0; // Continuous solver time; hits cannot postpone the safety limit.
     btVector3 previousPosition[RD_MAX_BODIES];
     btQuaternion previousRotation[RD_MAX_BODIES];
-    bool frozen = false, poseDirty = true, boundsDirty = true;
+    bool frozen = false, poseDirty = true, boundsDirty = true, prop = false;
     rd_matrix cachedPose[RD_MAX_BONES];
     float mins[3], maxs[3];
     int parent[RD_MAX_BONES], part[RD_MAX_BONES];
@@ -196,8 +196,8 @@ extern "C" void RD_FitFootHitboxes(int boneCount,const rd_bone *bones,int vertex
             }
     }
 }
-extern "C" int RD_Create(int entity, float token, int count, const rd_bone *bones,
-    int hitboxCount, const rd_hitbox *hitboxes, const rd_matrix *pose, const float *velocity, int hitgroup) {
+static int CreateDoll(int entity, float token, int count, const rd_bone *bones,
+    int hitboxCount, const rd_hitbox *hitboxes, const rd_matrix *pose, const float *velocity, int hitgroup, bool isProp) {
     if (count < 1 || count > RD_MAX_BONES || hitboxCount < 1 || hitboxCount > 256 || !std::isfinite(token)) return 0;
     // Reject cycles, invalid transforms and malformed MDLs before allocating bodies.
     for (int i = 0; i < count; ++i) {
@@ -213,9 +213,10 @@ extern "C" int RD_Create(int entity, float token, int count, const rd_bone *bone
     auto &p = Get();
     if (RD_Has(entity, token)) return 1;
     RD_Remove(entity);
-    if (p.dolls.size() >= RD_MAX_CORPSES) return 0;
+    int used=0;for(const auto &existing:p.dolls) if(existing->prop==isProp) ++used;
+    if(used >= (isProp?RD_MAX_PROPS:RD_MAX_CORPSES)) return 0;
     std::unique_ptr<Doll> d(new Doll);
-    d->entity = entity; d->token = token; d->count = count;
+    d->entity = entity; d->token = token; d->count = count;d->prop=isProp;
     d->scale = std::max(0.1f, std::min(8.0f, LengthScale(pose[0])));
     btVector3 lo[RD_MAX_BONES], hi[RD_MAX_BONES];
     int group[RD_MAX_BONES] = {};
@@ -391,6 +392,10 @@ extern "C" float RD_SelfPenetration(int entity) {
     }
     return depth.deepest;
 }
+extern "C" int RD_Create(int entity,float token,int count,const rd_bone *bones,
+    int hitboxCount,const rd_hitbox *hitboxes,const rd_matrix *pose,const float *velocity,int hitgroup) {
+    return CreateDoll(entity,token,count,bones,hitboxCount,hitboxes,pose,velocity,hitgroup,false);
+}
 extern "C" int RD_CreateProp(int entity,float token,int count,const rd_bone *bones,
     const rd_matrix *pose,int pointCount,const float (*points)[3],
     const float *velocity,const float *angularDegrees) {
@@ -406,7 +411,7 @@ extern "C" int RD_CreateProp(int entity,float token,int count,const rd_bone *bon
         box.maxs[a]=std::max(box.maxs[a],points[i][a]);
     }
     if(RD_Has(entity,token)) return 1;
-    if(!RD_Create(entity,token,count,bones,1,&box,pose,velocity,0)) return 0;
+    if(!CreateDoll(entity,token,count,bones,1,&box,pose,velocity,0,true)) return 0;
     auto &p=*physics;auto &part=p.find(entity)->parts[0];
     p.world.removeRigidBody(part.body.get());
     std::unique_ptr<btConvexHullShape> hull(new btConvexHullShape);
@@ -536,6 +541,10 @@ extern "C" int RD_Bounds(int entity, float *mins, float *maxs) {
     return 1;
 }
 extern "C" int RD_Count(void) { return physics ? (int)physics->dolls.size() : 0; }
+extern "C" int RD_CorpseCount(void) {
+    int count=0;if(physics) for(const auto &d:physics->dolls) if(!d->prop) ++count;
+    return count;
+}
 extern "C" int RD_BodyCount(int entity) { Doll *d = physics ? physics->find(entity) : nullptr; return d ? (int)d->parts.size() : 0; }
 extern "C" float RD_JointError(int entity) {
     Doll *d = physics ? physics->find(entity) : nullptr;

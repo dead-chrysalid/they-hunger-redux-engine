@@ -8,6 +8,7 @@ extern "C" {
 #define RD_MAX_BONES 128
 #define RD_MAX_BODIES 64
 #define RD_MAX_CORPSES 64
+#define RD_MAX_PROPS 128
 typedef float rd_matrix[3][4];
 typedef struct {
     int parent;
@@ -57,6 +58,7 @@ void RD_Step(double time, float gravity);
 int RD_Pose(int entity, rd_matrix *pose, int count);
 int RD_Bounds(int entity, float *mins, float *maxs);
 int RD_Count(void);
+int RD_CorpseCount(void);
 int RD_BodyCount(int entity);
 float RD_JointError(int entity);
 #ifdef __cplusplus
