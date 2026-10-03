@@ -466,9 +466,15 @@ static void LivingActorContactTests() {
     Floor();Check(RD_CreateProp(1,1,rig.count,rig.bones,rig.pose,8,points,zero,zero),"moving actor prop creation failed");
     Step(60,8);Check(RD_Frozen(1),"moving actor target failed to settle");
     lo[0]=-40;hi[0]=-24;hi[2]=72;RD_ActorBounds(100,lo,hi);
-    lo[0]=-12;hi[0]=4;RD_ActorBounds(100,lo,hi);
-    Check(!RD_Frozen(1),"moving living actor failed to wake a resting part");
-    for(int i=1;i<=60;++i)RD_Step(8+double(i)/120,800);
+    // Walk into the part rather than teleporting a hull over it: the latter
+    // traps it between the actor's underside and the floor without a side hit.
+    bool woke=false;
+    for(int i=1;i<=60;++i) {
+        lo[0]=-40+28.0f*i/60;hi[0]=lo[0]+16;RD_ActorBounds(100,lo,hi);
+        woke=woke || !RD_Frozen(1);
+        RD_Step(8+double(i)/120,800);
+    }
+    Check(woke,"moving living actor failed to wake a resting part");
     RD_Pose(1,pose,rig.count);Check(std::fabs(pose[0][0][3])>5,"moving actor did not displace resting part");
     std::cout<<"PASS live actor rebound, no tunneling, collider retirement and waking/displacing resting props\n";
 }
