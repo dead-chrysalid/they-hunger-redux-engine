@@ -49,6 +49,8 @@ struct Doll {
     bool frozen = false, poseDirty = true, boundsDirty = true, prop = false;
     bool held=false;
     btVector3 holdTarget;
+    btQuaternion holdRotation=btQuaternion::getIdentity();
+    std::vector<btTransform> holdLocal;
     double holdDeadline=0;
     rd_matrix cachedPose[RD_MAX_BONES];
     float mins[3], maxs[3];
@@ -462,21 +464,30 @@ extern "C" void RD_Step(double time, float gravity) {
             if(d->held) {
                 if(time>d->holdDeadline) d->held=false;
                 else {
-                    auto &part=d->parts[0];auto &body=*part.body;
-                    const btVector3 target=d->holdTarget;
-                    const btVector3 delta=target-body.getWorldTransform().getOrigin();
+                    btVector3 centre(0,0,0);
+                    for(auto &part:d->parts)centre+=part.body->getWorldTransform().getOrigin();
+                    centre/=btScalar(d->parts.size());
+                    const btVector3 delta=d->holdTarget-centre;
                     if(delta.length2()>std::pow(256*Scale,2)) d->held=false;
                     else {
                         // Reach the camera target in one physics tick when clear.
                         // Contacts and CCD resolve walls before the body can move.
-                        btVector3 velocity=delta/btScalar(step);
-                        if(velocity.length()>80)velocity*=80/velocity.length();
-                        body.setLinearVelocity(velocity);
-                        body.setAngularVelocity(btVector3(0,0,0));
-                        body.activate(true);d->age=d->stable=d->activeTime=0;
+                        for(size_t i=0;i<d->parts.size();++i) {
+                            auto &body=*d->parts[i].body;
+                            const btVector3 target=d->holdTarget+quatRotate(d->holdRotation,d->holdLocal[i].getOrigin());
+                            btVector3 velocity=(target-body.getWorldTransform().getOrigin())/btScalar(step);
+                            if(velocity.length()>80)velocity*=80/velocity.length();
+                            body.setLinearVelocity(velocity);
+                            btQuaternion rotation=d->holdRotation*d->holdLocal[i].getRotation()*body.getWorldTransform().getRotation().inverse();
+                            rotation.normalize();if(rotation.w()<0)rotation=-rotation;
+                            btVector3 spin=rotation.getAngle()<0.0001f?btVector3(0,0,0):rotation.getAxis()*rotation.getAngle()/btScalar(step);
+                            if(spin.length()>40)spin*=40/spin.length();
+                            body.setAngularVelocity(spin);body.activate(true);
+                        }
+                        d->age=d->stable=d->activeTime=0;
                     }
                 }
-                if(!d->held)d->parts[0].body->setCcdMotionThreshold(0);
+                if(!d->held && d->prop)d->parts[0].body->setCcdMotionThreshold(0);
             }
             for(auto &part:d->parts) if(part.fittedBoot) part.stepStart=part.body->getWorldTransform();
         }
@@ -635,22 +646,41 @@ extern "C" void RD_FreezeAll(double time) {
 }
 extern "C" int RD_HoldProp(int entity,float token,const float *target) {
     Doll *d=physics?physics->find(entity):nullptr;
-    if(!d || !d->prop || d->token!=token || !target)return 0;
+    if(!d || d->parts.empty() || d->token!=token || !target)return 0;
     for(int i=0;i<3;++i)if(!std::isfinite(target[i]))return 0;
-    Wake(*d);d->held=true;d->holdTarget=Vec(target);d->holdDeadline=physics->lastTime+0.25;
-    d->parts[0].body->setCcdMotionThreshold(0.01f);
-    d->parts[0].body->setCcdSweptSphereRadius(0.025f);
+    Wake(*d);
+    if(!d->held) {
+        btVector3 centre(0,0,0);for(auto &p:d->parts)centre+=p.body->getWorldTransform().getOrigin();
+        centre/=btScalar(d->parts.size());d->holdRotation=btQuaternion::getIdentity();d->holdLocal.clear();
+        for(auto &p:d->parts) {btTransform local=p.body->getWorldTransform();local.getOrigin()-=centre;d->holdLocal.push_back(local);}
+    }
+    d->held=true;d->holdTarget=Vec(target);d->holdDeadline=physics->lastTime+0.25;
+    if(d->prop) {
+        d->parts[0].body->setCcdMotionThreshold(0.01f);
+        d->parts[0].body->setCcdSweptSphereRadius(0.025f);
+    }
+    return 1;
+}
+extern "C" int RD_RotateHeld(int entity,float token,const float *axisDegrees) {
+    Doll *d=physics?physics->find(entity):nullptr;
+    if(!d || !d->held || d->token!=token || !axisDegrees)return 0;
+    for(int i=0;i<3;++i)if(!std::isfinite(axisDegrees[i]))return 0;
+    btVector3 axis(axisDegrees[0],axisDegrees[1],axisDegrees[2]);
+    float angle=axis.length();if(angle>180 || angle<0.00001f)return 0;
+    d->holdRotation=btQuaternion(axis/angle,angle*SIMD_PI/180)*d->holdRotation;d->holdRotation.normalize();
     return 1;
 }
 extern "C" int RD_ThrowProp(int entity,float token,const float *velocity) {
     Doll *d=physics?physics->find(entity):nullptr;
-    if(!d || !d->prop || d->token!=token || !velocity)return 0;
+    if(!d || d->parts.empty() || d->token!=token || !velocity)return 0;
     for(int i=0;i<3;++i)if(!std::isfinite(velocity[i]))return 0;
     d->held=false;Wake(*d);d->age=d->stable=d->activeTime=0;
-    d->parts[0].body->setCcdMotionThreshold(0);
+    if(d->prop)d->parts[0].body->setCcdMotionThreshold(0);
     btVector3 v=Vec(velocity);if(v.length()>16)v*=16/v.length();
-    d->parts[0].body->setLinearVelocity(v);
-    d->parts[0].body->setAngularVelocity(v.fuzzyZero()?btVector3(0,0,0):btVector3(2,3,1));
+    for(auto &part:d->parts) {
+        part.body->setLinearVelocity(v);
+        part.body->setAngularVelocity(v.fuzzyZero()?btVector3(0,0,0):btVector3(2,3,1));
+    }
     return 1;
 }
 static void Buoyancy(Doll &d, float gravity, float dt) {

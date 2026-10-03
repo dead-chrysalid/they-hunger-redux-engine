@@ -402,6 +402,9 @@ static void CarryPartTests() {
     }
     rd_matrix pose[RD_MAX_BONES];RD_Pose(1,pose,rig.count);
     Check(std::fabs(pose[0][2][3]-48)<4,"carried prop did not follow target");
+    float spin[3]={0,0,30};
+    Check(!RD_RotateHeld(1,8,spin),"stale rotation token accepted");
+    Check(RD_RotateHeld(1,9,spin),"held part rotation rejected");
     // A target beyond a wall must remain blocked by its physical collider.
     rd_matrix identity;Identity(identity);float a[]={24,-200,0},b[]={24,200,0},c[]={24,200,160},d[]={24,-200,160};
     RD_BeginMesh(2);RD_AddTriangle(a,b,c);RD_AddTriangle(a,c,d);RD_EndMesh(identity,0);
@@ -411,6 +414,7 @@ static void CarryPartTests() {
         RD_Step(10+double(i)/120,800);
     }
     RD_Pose(1,pose,rig.count);Check(pose[0][0][3]<24,"held part passed through wall");
+    Check(std::fabs(pose[0][0][0]-std::cos(30.0f*3.14159265f/180))<0.1f,"held part did not rotate");
     float velocity[]={-450,0,70};
     Check(!RD_ThrowProp(1,8,velocity),"stale throw token accepted");
     Check(RD_ThrowProp(1,9,velocity),"throw failed");
@@ -421,9 +425,26 @@ static void CarryPartTests() {
     RD_Pose(1,pose,rig.count);float height=pose[0][2][3];
     for(int i=1;i<=120;++i)RD_Step(13.1+double(i)/120,800);
     RD_Pose(1,pose,rig.count);Check(pose[0][2][3]<height-10,"missing holder updates leave a floating prop");
-    Create(rig,2,1);Check(!RD_HoldProp(2,1,target),"whole corpse accepted as detachable part");
+    Create(rig,2,1);target[0]=-200;target[1]=0;target[2]=80;
+    for(int i=1;i<=30;++i) {Check(RD_HoldProp(2,1,target),"authorized corpse carry rejected");RD_Step(14.1+double(i)/120,800);}
+    Check(RD_JointError(2)<2.5f,"carried corpse joints separated");
     RD_FreezeAll(15);Check(!RD_ActiveBodies(),"disabling physics leaves a held prop active");
-    std::cout<<"PASS part pickup spring, wall collision, throw velocity, stale/invalid input, lost-holder release and corpse exclusion\n";
+    std::cout<<"PASS camera carry, wall collision, mouse rotation, throw velocity, stale/invalid input, lost-holder release and authorized corpse carry\n";
+}
+static void HeadcrabCarryTest(const std::string &directory) {
+    Floor();auto rig=Model(directory+"/hungercrab.mdl");Create(rig);
+    float target[3]={0,0,96},rotation[3]={0,0,45},velocity[3]={500,0,70};
+    RD_Step(0,800);
+    for(int i=1;i<=120;++i) {
+        Check(RD_HoldProp(1,1,target),"headcrab carry rejected");
+        if(i==60)Check(RD_RotateHeld(1,1,rotation),"headcrab rotation rejected");
+        RD_Step(double(i)/120,800);
+    }
+    rd_matrix before[RD_MAX_BONES],after[RD_MAX_BONES];RD_Pose(1,before,rig.count);
+    Check(RD_JointError(1)<2.5f,"headcrab carry separated joints");
+    Check(RD_ThrowProp(1,1,velocity),"headcrab throw rejected");RD_Step(1.05,800);RD_Pose(1,after,rig.count);
+    Check(after[0][0][3]>before[0][0][3]+10,"headcrab did not move after throw");
+    std::cout<<"PASS authored headcrab carry, rotation, joint integrity and throw\n";
 }
 static void PileTest(const std::string &directory) {
     Floor();auto source=Model(directory+"/zombie.mdl");
@@ -481,6 +502,7 @@ int main(int argc,char **argv) {
         rig.bones[1].parent=2;Check(!RD_Create(1,1,rig.count,rig.bones,(int)rig.boxes.size(),rig.boxes.data(),rig.pose,v,0),"invalid hierarchy accepted");
         std::cout<<"PASS duplicate death, entity reuse, gib/removal, independent 64-corpse/128-prop budgets and capacity reuse, map reset, malformed hierarchy\n";
         if(argc>1) {
+            HeadcrabCarryTest(argv[1]);
             ZombiePartsTests(argv[1]);
             ZombiePartsTests(argv[1],"zombie_fresh",11,1<<1);
             ZombiePartsTests(argv[1],"../allies/barney",1,0);

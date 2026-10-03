@@ -63,6 +63,7 @@ void RD_Step(double time, float gravity);
 /* Pause in place when disabled; retain exact poses and corpse-hit colliders. */
 void RD_FreezeAll(double time);
 int RD_HoldProp(int entity,float token,const float *target);
+int RD_RotateHeld(int entity,float token,const float *axisDegrees);
 int RD_ThrowProp(int entity,float token,const float *velocity);
 int RD_Pose(int entity, rd_matrix *pose, int count);
 int RD_Bounds(int entity, float *mins, float *maxs);

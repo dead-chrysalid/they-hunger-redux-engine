@@ -124,7 +124,7 @@ static void R_RagdollPartUse(void) {
     // fuser4 is sent at 1/1000-second precision; the server command carries
     // the original float. Validate within that network quantum, then use the
     // client token that actually created this physics body.
-    if(!e || e->curstate.iuser4!=RD_PROP_MARKER || !RD_CommandTokenMatches(e->curstate.fuser4,token)) return;
+    if(!R_PhysicsEntity(e) || !e->curstate.iuser3 || !RD_CommandTokenMatches(e->curstate.fuser4,token)) return;
     token=e->curstate.fuser4;
     for(i=0;i<3;++i)vector[i]=Q_atof(gEngfuncs.Cmd_Argv(3+i));
     if(!Q_strcmp(gEngfuncs.Cmd_Argv(0),"ragdoll_hold")) {
@@ -135,6 +135,14 @@ static void R_RagdollPartUse(void) {
         if(heldPartEntity==entity)heldPartEntity=0;
         RD_ThrowProp(entity,token,vector);
     }
+}
+static void R_RagdollRotateHeld(void) {
+    vec3_t axis,right,up;float pitch,yaw;
+    if(!enabled || !enabled->value || !heldPartEntity || !ENGINE_GET_PARM(PARM_LOCAL_GAME) || gEngfuncs.Cmd_Argc()!=3)return;
+    pitch=Q_atof(gEngfuncs.Cmd_Argv(1));yaw=Q_atof(gEngfuncs.Cmd_Argv(2));
+    AngleVectors(RI.viewangles,NULL,right,up);
+    VectorScale(right,pitch,axis);VectorMA(axis,yaw,up,axis);
+    RD_RotateHeld(heldPartEntity,heldPartToken,axis);
 }
 int EXPORT Ragdoll_Trace(const float *start,const float *end,float limit,rd_hit *hit) {
     return enabled && enabled->value && mapReady && ENGINE_GET_PARM(PARM_LOCAL_GAME) && RD_Trace(start,end,limit,hit);
@@ -225,6 +233,7 @@ void R_RagdollInit(void) {
         gEngfuncs.Cmd_AddCommand("ragdoll_remove_part",R_RagdollRemovePart,"Remove a detached head or limb collider group");
         gEngfuncs.Cmd_AddCommand("ragdoll_hold",R_RagdollPartUse,"Carry a local detached part with collision");
         gEngfuncs.Cmd_AddCommand("ragdoll_throw",R_RagdollPartUse,"Release and throw a local detached part");
+        gEngfuncs.Cmd_AddCommand("ragdoll_rotate",R_RagdollRotateHeld,"Rotate a held body with mouse drag");
         registered = 1;
     }
 }
@@ -250,6 +259,7 @@ void R_RagdollShutdown(void) {
     memset(poses, 0, sizeof(poses)); memset(brushes, 0, sizeof(brushes));
     if (registered) { gEngfuncs.Cmd_RemoveCommand("ragdoll_status"); gEngfuncs.Cmd_RemoveCommand("ragdoll_impulse"); gEngfuncs.Cmd_RemoveCommand("ragdoll_remove_arm"); gEngfuncs.Cmd_RemoveCommand("ragdoll_remove_part"); }
     if (registered) {gEngfuncs.Cmd_RemoveCommand("ragdoll_hold");gEngfuncs.Cmd_RemoveCommand("ragdoll_throw");}
+    if (registered)gEngfuncs.Cmd_RemoveCommand("ragdoll_rotate");
     restoredCount=0; restoredMap[0]=0;
     registered = 0; enabled = debug = NULL;
 }
