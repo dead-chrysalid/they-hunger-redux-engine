@@ -101,8 +101,19 @@ static Rig Model(const std::string &path) {
         std::memcpy(h.mins,d.data()+off+8,12);std::memcpy(h.maxs,d.data()+off+20,12);r.boxes.push_back(h);
     }
     const int partCount=Int(d,204),partOffset=Int(d,208);
+    int expectedModelOffset=partOffset+partCount*76;
     for(int part=0;part<partCount;++part) {
         const int modelOffset=Int(d,partOffset+part*76+72);
+        // The engine bounds fallback reads this consecutive array directly.
+        Check(modelOffset==expectedModelOffset,"studio submodels violate engine bounds layout");
+        const int models=Int(d,partOffset+part*76+64);
+        Check(models>0 && size_t(modelOffset)+size_t(models)*112<=d.size(),"studio submodel headers outside resident allocation");
+        expectedModelOffset+=models*112;
+        for(int model=0;model<models;++model) {
+            const int header=modelOffset+model*112;
+            const int n=Int(d,header+80),points=Int(d,header+88);
+            Check(n>=0 && points>=0 && size_t(points)+size_t(n)*12<=d.size(),"bounds walker vertex range invalid");
+        }
         const int count=Int(d,modelOffset+80),weights=Int(d,modelOffset+84),vertices=Int(d,modelOffset+88);
         Check(count>=0 && weights>=0 && vertices>=0 && size_t(weights)+count<=d.size() && size_t(vertices)+size_t(count)*12<=d.size(),"invalid mesh data");
         const auto points=reinterpret_cast<const float (*)[3]>(d.data()+vertices);
