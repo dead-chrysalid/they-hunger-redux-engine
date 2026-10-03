@@ -495,6 +495,52 @@ static void LivingActorContactTests() {
     Check(std::fabs(idleState.linear[0][0])<100,"idle actor relocation produced a ghost velocity");
     std::cout<<"PASS live actor rebound, no tunneling, collider retirement, resting prop wake and bounded slow-frame/idle contacts\n";
 }
+static void ExplosionTests() {
+    Floor();auto rig=Synthetic();float points[8][3],zero[3]={};
+    for(int i=0;i<8;++i)for(int a=0;a<3;++a)points[i][a]=(i&(1<<a))?3.0f:-3.0f;
+    Check(RD_CreateProp(1,1,rig.count,rig.bones,rig.pose,8,points,zero,zero),"blast prop creation failed");
+    Create(rig,2,1);Step(60,8);
+    Check(RD_Frozen(1) && RD_Frozen(2),"blast targets failed to settle");
+    rd_matrix before[RD_MAX_BONES],after[RD_MAX_BONES];RD_Pose(1,before,rig.count);
+    float source[3]={-50,0,8};RD_Blast(source,200,400);
+    Check(!RD_Frozen(1) && !RD_Frozen(2),"blast did not wake prop and corpse");
+    for(int i=1;i<=24;++i)RD_Step(8+double(i)/120,800);
+    RD_Pose(1,after,rig.count);Check(after[0][0][3]>before[0][0][3]+10,"blast did not push part outward");
+    Floor();Check(RD_CreateProp(1,1,rig.count,rig.bones,rig.pose,8,points,zero,zero),"occluded blast prop creation failed");
+    Step(60,8);rd_matrix wall;Identity(wall);
+    float a[3]={-20,-100,0},b[3]={-20,100,0},c[3]={-20,100,200},d[3]={-20,-100,200};
+    RD_BeginMesh(5);RD_AddTriangle(a,b,c);RD_AddTriangle(a,c,d);RD_EndMesh(wall,0);
+    RD_Blast(source,200,400);Check(RD_Frozen(1),"blast pushed a part through a blocking wall");
+    RD_Blast(source,20,400);Check(RD_Frozen(1),"out-of-radius blast woke a part");
+    RD_Blast(source,200,std::numeric_limits<float>::quiet_NaN());Check(RD_Frozen(1),"invalid blast woke a part");
+    std::cout<<"PASS blast wakes and pushes settled corpses/parts, wall occlusion, radius and invalid input\n";
+}
+static void GrenadeModelTest(const std::string &directory) {
+    const std::string path=directory+"/../../weapons/world/w_grenade.mdl";
+    auto rig=Model(path);Check(rig.count==1,"grenade root query requires a single bone");
+    for(int a=0;a<3;++a)Check(std::fabs(rig.pose[0][a][3]-(a==2?100:0))<0.0001f,"grenade root has an unexpected bind offset");
+    std::ifstream f(path,std::ios::binary);std::vector<char> data((std::istreambuf_iterator<char>(f)),std::istreambuf_iterator<char>());
+    std::vector<btVector3> points;
+    const int parts=Int(data,204),offset=Int(data,208);
+    for(int i=0;i<parts;++i) {
+        const int model=Int(data,offset+i*76+72),count=Int(data,model+80),vertices=Int(data,model+88);
+        for(int v=0;v<count;++v) {float xyz[3];std::memcpy(xyz,data.data()+vertices+v*12,12);points.emplace_back(xyz[0],xyz[1],xyz[2]);}
+    }
+    std::vector<float> flat;for(const auto &v:points)for(int a=0;a<3;++a)flat.push_back(v[a]);
+    const auto vertices=reinterpret_cast<const float (*)[3]>(flat.data());
+    float velocity[3]={200,0,0},angular[3]={180,120,240};Floor();
+    Check(RD_CreateGrenade(1,1,rig.count,rig.bones,rig.pose,(int)points.size(),vertices,velocity,angular),"authored grenade creation failed");
+    RD_Step(0,800);bool bounced=false;
+    for(int i=1;i<=180;++i) {
+        RD_Step(double(i)/120,800);rd_snapshot state;Check(RD_Capture(1,&state),"grenade physics state missing");
+        for(int a=0;a<3;++a)Check(std::isfinite(state.linear[0][a]),"grenade velocity became nonfinite");
+        if(i>40 && state.linear[0][2]>20)bounced=true;
+    }
+    Check(bounced,"physical grenade never bounced off the floor");
+    float lo[3],hi[3];RD_Bounds(1,lo,hi);Check(lo[2]>-20,"physical grenade tunneled through the floor");
+    RD_Remove(1);Check(!RD_Has(1,1),"exploded grenade left a physics collider");
+    std::cout<<"PASS authored rigid grenade, finite spin, floor bounce/contact and explosion collider retirement\n";
+}
 static void PileTest(const std::string &directory) {
     Floor();auto source=Model(directory+"/zombie.mdl");
     btTransform rotate(btQuaternion(btVector3(1,0,0),SIMD_HALF_PI),btVector3(0,0,0));
@@ -533,6 +579,7 @@ int main(int argc,char **argv) {
         DisableTests();
         CarryPartTests();
         LivingActorContactTests();
+        ExplosionTests();
         float a=Simulate(30), b=Simulate(60), c=Simulate(144);
         Check(std::fabs(a-b)<0.01f && std::fabs(a-c)<0.01f,"frame-rate-dependent simulation");
         std::cout<<"PASS fixed 120 Hz, floor collision, constrained joints, finite poses, pause\n";
@@ -547,11 +594,14 @@ int main(int argc,char **argv) {
         for(int i=0;i<RD_MAX_PROPS;++i) Check(RD_CreateProp(1000+i,1,rig.count,rig.bones,rig.pose,8,points,v,angular),"corpses consumed prop budget");
         Check(RD_CorpseCount()==RD_MAX_CORPSES && RD_Count()==RD_MAX_CORPSES+RD_MAX_PROPS,"independent budgets incorrect");
         Check(!RD_CreateProp(2000,1,rig.count,rig.bones,rig.pose,8,points,v,angular),"prop budget exceeded");
+        for(int i=0;i<RD_MAX_GRENADES;++i)Check(RD_CreateGrenade(3000+i,1,rig.count,rig.bones,rig.pose,8,points,v,angular),"full remains budget blocked a grenade");
+        Check(!RD_CreateGrenade(4000,1,rig.count,rig.bones,rig.pose,8,points,v,angular),"grenade reserve budget exceeded");
         RD_Remove(1000);Check(RD_CreateProp(2000,1,rig.count,rig.bones,rig.pose,8,points,v,angular),"evicted prop capacity not reused");
         RD_Reset();Check(RD_Count()==0,"map reset leaked corpses");
         rig.bones[1].parent=2;Check(!RD_Create(1,1,rig.count,rig.bones,(int)rig.boxes.size(),rig.boxes.data(),rig.pose,v,0),"invalid hierarchy accepted");
         std::cout<<"PASS duplicate death, entity reuse, gib/removal, independent 64-corpse/128-prop budgets and capacity reuse, map reset, malformed hierarchy\n";
         if(argc>1) {
+            GrenadeModelTest(argv[1]);
             HeadcrabCarryTest(argv[1]);
             ZombiePartsTests(argv[1]);
             ZombiePartsTests(argv[1],"zombie_fresh",11,1<<1);

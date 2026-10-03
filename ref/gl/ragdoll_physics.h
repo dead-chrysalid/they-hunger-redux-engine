@@ -9,6 +9,7 @@ extern "C" {
 #define RD_MAX_BODIES 64
 #define RD_MAX_CORPSES 64
 #define RD_MAX_PROPS 128
+#define RD_MAX_GRENADES 16
 /* Account for delta.lst's 1000x float quantization without accepting stale IDs. */
 static int RD_CommandTokenMatches(float clientToken,float serverToken) {
     const float delta=clientToken-serverToken;
@@ -62,6 +63,10 @@ void RD_FitFootHitboxes(int boneCount,const rd_bone *bones,int vertexCount,
 void RD_Remove(int entity);
 int RD_Has(int entity, float token);
 void RD_Step(double time, float gravity);
+int RD_Grenade(int entity,float token);
+int RD_CreateGrenade(int entity,float token,int count,const rd_bone *bones,const rd_matrix *pose,
+    int pointCount,const float (*points)[3],const float *velocity,const float *angularDegrees);
+void RD_Blast(const float *origin,float radius,float strength);
 /* Pause in place when disabled; retain exact poses and corpse-hit colliders. */
 void RD_FreezeAll(double time);
 int RD_HoldProp(int entity,float token,const float *target);

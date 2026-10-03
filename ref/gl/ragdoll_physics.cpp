@@ -2,6 +2,7 @@
  * Original integration; see Documentation/ragdolls.md for research/provenance. */
 #include "ragdoll_physics.h"
 #include "../../3rdparty/bullet/src/btBulletDynamicsCommon.h"
+#include "../../3rdparty/bullet/src/BulletCollision/CollisionDispatch/btManifoldResult.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -12,6 +13,12 @@
 namespace {
 const float Scale = 0.0254f; // GoldSrc inch -> metre; Z stays up.
 enum { WorldGroup = 1, CorpseGroup = 2, ActorGroup = 4 };
+bool GrenadeContact(btManifoldPoint &point,const btCollisionObjectWrapper *a,int,int,
+    const btCollisionObjectWrapper *b,int,int) {
+    if(a->getCollisionObject()->getUserIndex()==19782 || b->getCollisionObject()->getUserIndex()==19782)
+        point.m_combinedRestitution=0.4f;
+    return true;
+}
 btVector3 Vec(const float *p) { return btVector3(p[0], p[1], p[2]) * Scale; }
 btTransform Transform(const rd_matrix m) {
     btMatrix3x3 basis(m[0][0], m[0][1], m[0][2], m[1][0], m[1][1], m[1][2], m[2][0], m[2][1], m[2][2]);
@@ -49,6 +56,7 @@ struct Doll {
     bool frozen = false, poseDirty = true, boundsDirty = true, prop = false;
     bool held=false;
     bool actorContacts=false;
+    bool grenade=false;
     btVector3 holdTarget;
     btQuaternion holdRotation=btQuaternion::getIdentity();
     std::vector<btTransform> holdLocal;
@@ -89,6 +97,7 @@ struct Physics {
     double lastTime = -1, accumulator = 0;
     Physics() : dispatcher(&config), world(&dispatcher, &broadphase, &solver, &config) {
         world.setGravity(btVector3(0, 0, -800 * Scale));
+        gContactAddedCallback=GrenadeContact;
         world.getSolverInfo().m_numIterations = 80;
         world.getSolverInfo().m_splitImpulse = true;
         // Correct shallow penetrations without injecting bounce into resting bodies.
@@ -251,7 +260,7 @@ extern "C" void RD_FitFootHitboxes(int boneCount,const rd_bone *bones,int vertex
     }
 }
 static int CreateDoll(int entity, float token, int count, const rd_bone *bones,
-    int hitboxCount, const rd_hitbox *hitboxes, const rd_matrix *pose, const float *velocity, int hitgroup, bool isProp) {
+    int hitboxCount, const rd_hitbox *hitboxes, const rd_matrix *pose, const float *velocity, int hitgroup, bool isProp,bool isGrenade=false) {
     if (count < 1 || count > RD_MAX_BONES || hitboxCount < 1 || hitboxCount > 256 || !std::isfinite(token)) return 0;
     // Reject cycles, invalid transforms and malformed MDLs before allocating bodies.
     for (int i = 0; i < count; ++i) {
@@ -267,10 +276,10 @@ static int CreateDoll(int entity, float token, int count, const rd_bone *bones,
     auto &p = Get();
     if (RD_Has(entity, token)) return 1;
     RD_Remove(entity);
-    int used=0;for(const auto &existing:p.dolls) if(existing->prop==isProp) ++used;
-    if(used >= (isProp?RD_MAX_PROPS:RD_MAX_CORPSES)) return 0;
+    int used=0;for(const auto &existing:p.dolls) if(existing->prop==isProp && (!isProp || existing->grenade==isGrenade)) ++used;
+    if(used >= (isProp?(isGrenade?RD_MAX_GRENADES:RD_MAX_PROPS):RD_MAX_CORPSES)) return 0;
     std::unique_ptr<Doll> d(new Doll);
-    d->entity = entity; d->token = token; d->count = count;d->prop=isProp;
+    d->entity = entity; d->token = token; d->count = count;d->prop=isProp;d->grenade=isGrenade;
     d->scale = std::max(0.1f, std::min(8.0f, LengthScale(pose[0])));
     btVector3 lo[RD_MAX_BONES], hi[RD_MAX_BONES];
     int group[RD_MAX_BONES] = {};
@@ -451,9 +460,9 @@ extern "C" int RD_Create(int entity,float token,int count,const rd_bone *bones,
     int hitboxCount,const rd_hitbox *hitboxes,const rd_matrix *pose,const float *velocity,int hitgroup) {
     return CreateDoll(entity,token,count,bones,hitboxCount,hitboxes,pose,velocity,hitgroup,false);
 }
-extern "C" int RD_CreateProp(int entity,float token,int count,const rd_bone *bones,
+static int CreateProp(int entity,float token,int count,const rd_bone *bones,
     const rd_matrix *pose,int pointCount,const float (*points)[3],
-    const float *velocity,const float *angularDegrees) {
+    const float *velocity,const float *angularDegrees,bool grenade) {
     if(!points || pointCount<4 || pointCount>8192 || !angularDegrees) return 0;
     rd_hitbox box={};box.bone=0;box.group=0;
     for(int a=0;a<3;++a) {
@@ -466,7 +475,7 @@ extern "C" int RD_CreateProp(int entity,float token,int count,const rd_bone *bon
         box.maxs[a]=std::max(box.maxs[a],points[i][a]);
     }
     if(RD_Has(entity,token)) return 1;
-    if(!CreateDoll(entity,token,count,bones,1,&box,pose,velocity,0,true)) return 0;
+    if(!CreateDoll(entity,token,count,bones,1,&box,pose,velocity,0,true,grenade)) return 0;
     auto &p=*physics;auto &part=p.find(entity)->parts[0];
     p.world.removeRigidBody(part.body.get());
     std::unique_ptr<btConvexHullShape> hull(new btConvexHullShape);
@@ -484,6 +493,53 @@ extern "C" int RD_CreateProp(int entity,float token,int count,const rd_bone *bon
     part.body->setRestitution(0.3f);
     p.world.addRigidBody(part.body.get(),CorpseGroup,WorldGroup|CorpseGroup|ActorGroup);
     return 1;
+}
+extern "C" int RD_CreateProp(int entity,float token,int count,const rd_bone *bones,
+    const rd_matrix *pose,int pointCount,const float (*points)[3],const float *velocity,const float *angularDegrees) {
+    return CreateProp(entity,token,count,bones,pose,pointCount,points,velocity,angularDegrees,false);
+}
+extern "C" int RD_CreateGrenade(int entity,float token,int count,const rd_bone *bones,
+    const rd_matrix *pose,int pointCount,const float (*points)[3],const float *velocity,const float *angularDegrees) {
+    return CreateProp(entity,token,count,bones,pose,pointCount,points,velocity,angularDegrees,true) && RD_Grenade(entity,token);
+}
+extern "C" int RD_Grenade(int entity,float token) {
+    Doll *d=physics?physics->find(entity):nullptr;
+    if(!d || !d->prop || !RD_Has(entity,token))return 0;
+    d->grenade=true;auto &part=d->parts[0];auto &body=*part.body;
+    btVector3 inertia;part.shape->calculateLocalInertia(0.4f,inertia);
+    body.setMassProps(0.4f,inertia);body.updateInertiaTensor();
+    body.setUserIndex(19782);body.setCollisionFlags(body.getCollisionFlags()|btCollisionObject::CF_CUSTOM_MATERIAL_CALLBACK);
+    body.setFlags(body.getFlags()|BT_DISABLE_WORLD_GRAVITY);
+    body.setFriction(0.55f);body.setRollingFriction(0.03f);body.setSpinningFriction(0.03f);
+    body.setCcdMotionThreshold(0.01f);body.setCcdSweptSphereRadius(std::min(0.025f,part.radius*0.8f));
+    return 1;
+}
+extern "C" void RD_Blast(const float *origin,float radius,float strength) {
+    if(!physics || !origin || !std::isfinite(radius) || radius<=0 || !std::isfinite(strength) || strength<=0)return;
+    for(int a=0;a<3;++a)if(!std::isfinite(origin[a]))return;
+    auto &p=*physics;const btVector3 source=Vec(origin);const btScalar reach=radius*Scale;
+    strength=std::min(600.0f,strength);
+    for(auto &d:p.dolls) {
+        if(d->held)continue;
+        float lo[3],hi[3];if(!RD_Bounds(d->entity,lo,hi))continue;
+        btVector3 centre=(Vec(lo)+Vec(hi))*0.5f;
+        if((centre-source).length()>reach)continue;
+        btCollisionWorld::ClosestRayResultCallback sight(source,centre);
+        sight.m_collisionFilterGroup=CorpseGroup;sight.m_collisionFilterMask=WorldGroup;
+        p.world.rayTest(source,centre,sight);if(sight.hasHit() && sight.m_closestHitFraction<0.99f)continue;
+        if(waterQuery) {float surface;float target[3]={float(centre.x()/Scale),float(centre.y()/Scale),float(centre.z()/Scale)};
+            if(bool(waterQuery(origin,&surface))!=bool(waterQuery(target,&surface)))continue;
+        }
+        Wake(*d);d->age=d->stable=0;
+        for(auto &part:d->parts) {
+            auto &body=*part.body;btVector3 outward=body.getWorldTransform().getOrigin()-source;
+            const btScalar distance=outward.length();if(distance>=reach)continue;
+            outward=distance>0.001f?outward/distance:btVector3(0,0,1);
+            outward.setZ(std::max(btScalar(0.25f),outward.z()));outward.normalize();
+            const btVector3 kick=outward*(strength*Scale*(1-distance/reach));
+            body.applyCentralImpulse(kick/body.getInvMass());body.activate(true);
+        }
+    }
 }
 extern "C" void RD_Step(double time, float gravity) {
     if (!physics || !std::isfinite(time)) return;
@@ -529,6 +585,7 @@ extern "C" void RD_Step(double time, float gravity) {
             actor.body->setInterpolationWorldTransform(previous);
         }
         for (auto &d : p.dolls) if (!d->frozen) {
+            if(d->grenade)d->parts[0].body->setGravity(p.world.getGravity()*0.5f);
             Buoyancy(*d, gravity, (float)step);
             if(d->held) {
                 if(time>d->holdDeadline) d->held=false;

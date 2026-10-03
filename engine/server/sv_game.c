@@ -3549,7 +3549,7 @@ static void GAME_EXPORT pfnGetBonePosition( const edict_t* pEdict, int iBone, fl
 	if( !SV_IsValidEdict( pEdict ))
 		return;
 #if !XASH_DEDICATED
-    if(svs.maxclients==1 && pEdict->v.deadflag!=DEAD_NO && ref.initialized && ref.ragdollBone &&
+    if(svs.maxclients==1 && (pEdict->v.deadflag!=DEAD_NO || pEdict->v.iuser4==19782) && ref.initialized && ref.ragdollBone &&
         ref.ragdollBone(NUM_FOR_EDICT(pEdict),iBone,rgflOrigin,rgflAngles)) return;
 #endif
 	Mod_GetBonePosition( pEdict, iBone, rgflOrigin, rgflAngles );
