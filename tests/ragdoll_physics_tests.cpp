@@ -75,6 +75,12 @@ static Rig Model(const std::string &path) {
     std::ifstream f(path,std::ios::binary);Check(bool(f),"model file unavailable");
     std::vector<char> d((std::istreambuf_iterator<char>(f)),std::istreambuf_iterator<char>());
     Check(Int(d,0)==0x54534449 && Int(d,4)==10,"unexpected studio format");
+    // Match the engine's resident allocation after embedded texture upload.
+    // A raw-file-only test can miss geometry incorrectly placed past this tail.
+    if(Int(d,180)>0) {
+        const int limit=Int(d,188);Check(limit>=244 && size_t(limit)<=d.size(),"invalid texture truncation boundary");
+        d.resize(limit);
+    }
     Rig r; r.count=Int(d,140);int boneoff=Int(d,144),boxcount=Int(d,156),boxoff=Int(d,160);
     Check(r.count>0 && r.count<=RD_MAX_BONES && boxcount>0 && boxcount<=256,"invalid studio counts");
     btTransform world[RD_MAX_BONES];
@@ -303,6 +309,8 @@ static void ZombiePartsTests(const std::string &directory) {
     std::ifstream file(directory+"/zombie_parts.mdl",std::ios::binary);Check(bool(file),"parts bank unavailable");
     std::vector<char> d((std::istreambuf_iterator<char>(file)),std::istreambuf_iterator<char>());
     Check(Int(d,140)==1 && Int(d,156)==0 && Int(d,204)==5,"invalid parts bank layout");
+    const int residentLimit=Int(d,188);Check(residentLimit>=244 && size_t(residentLimit)<=d.size(),"invalid parts texture boundary");
+    d.resize(residentLimit);
     const int table=Int(d,208);int tested=0;
     for(int part=0;part<5;++part) for(int appearance=0;appearance<11;++appearance) {
         const int group=table+part*76;
