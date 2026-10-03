@@ -534,6 +534,9 @@ static void GrenadeModelTest(const std::string &directory) {
     const auto vertices=reinterpret_cast<const float (*)[3]>(flat.data());
     float velocity[3]={200,0,0},angular[3]={180,120,240},zero[3]={};Floor();
     Check(RD_CreateGrenade(1,1,rig.count,rig.bones,rig.pose,(int)points.size(),vertices,velocity,angular),"authored grenade creation failed");
+    float rayStart[3]={0,0,140},rayEnd[3]={0,0,90};rd_hit grenadeHit;
+    Check(RD_Trace(rayStart,rayEnd,1,&grenadeHit) && grenadeHit.entity==1 && grenadeHit.group==0,
+        "grenade use ray lost its entity identity during material setup");
     RD_Step(0,800);float target[3]={0,0,80},turn[3]={0,0,30};
     Check(RD_HoldProp(1,1,target),"physical grenade cannot be carried");
     Check(RD_RotateHeld(1,1,turn),"held grenade cannot be rotated");

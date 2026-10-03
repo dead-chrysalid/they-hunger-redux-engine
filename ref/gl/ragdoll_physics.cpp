@@ -13,9 +13,10 @@
 namespace {
 const float Scale = 0.0254f; // GoldSrc inch -> metre; Z stays up.
 enum { WorldGroup = 1, CorpseGroup = 2, ActorGroup = 4 };
+int grenadeContactTag;
 bool GrenadeContact(btManifoldPoint &point,const btCollisionObjectWrapper *a,int,int,
     const btCollisionObjectWrapper *b,int,int) {
-    if(a->getCollisionObject()->getUserIndex()==19782 || b->getCollisionObject()->getUserIndex()==19782)
+    if(a->getCollisionObject()->getUserPointer()==&grenadeContactTag || b->getCollisionObject()->getUserPointer()==&grenadeContactTag)
         point.m_combinedRestitution=0.4f;
     return true;
 }
@@ -508,7 +509,7 @@ extern "C" int RD_Grenade(int entity,float token) {
     d->grenade=true;auto &part=d->parts[0];auto &body=*part.body;
     btVector3 inertia;part.shape->calculateLocalInertia(0.4f,inertia);
     body.setMassProps(0.4f,inertia);body.updateInertiaTensor();
-    body.setUserIndex(19782);body.setCollisionFlags(body.getCollisionFlags()|btCollisionObject::CF_CUSTOM_MATERIAL_CALLBACK);
+    body.setUserPointer(&grenadeContactTag);body.setCollisionFlags(body.getCollisionFlags()|btCollisionObject::CF_CUSTOM_MATERIAL_CALLBACK);
     body.setFlags(body.getFlags()|BT_DISABLE_WORLD_GRAVITY);
     body.setFriction(0.55f);body.setRollingFriction(0.03f);body.setSpinningFriction(0.03f);
     body.setCcdMotionThreshold(0.01f);body.setCcdSweptSphereRadius(std::min(0.025f,part.radius*0.8f));
