@@ -273,6 +273,60 @@ static void PropTests() {
     Check(!RD_CreateProp(1,2,rig.count,rig.bones,rig.pose,8,points,velocity,angular),"malformed prop accepted");
     std::cout<<"PASS rigid convex prop floor contact, settling, intact skeleton, hit wake, removal and malformed input\n";
 }
+static void ZombiePartsTests(const std::string &directory) {
+    // Exercise all anatomical groups on the actual shipped zombie skeleton,
+    // both while falling and after sleeping. Torso colliders must survive.
+    const int groups[]={1,4,5,6,7};
+    for(int asleep=0;asleep<2;++asleep) {
+        Floor();auto rig=Model(directory+"/zombie.mdl");Create(rig);
+        if(asleep) {Step(60,20);Check(RD_Frozen(1),"zombie cut test failed to settle");}
+        for(int group:groups) {
+            rd_snapshot before,after;Check(RD_Capture(1,&before),"zombie pre-cut snapshot unavailable");
+            int expected=0;for(const auto &box:rig.boxes) if(box.group==group) ++expected;
+            Check(expected>0,"zombie anatomy group has no collider");
+            const int bodies=RD_BodyCount(1);
+            Check(RD_RemoveGroup(1,group)==expected && RD_BodyCount(1)==bodies-expected,"zombie cut removed wrong colliders");
+            Check(!RD_RemoveGroup(1,group),"duplicate zombie cut changed anatomy");
+            Check(RD_Capture(1,&after),"zombie post-cut snapshot unavailable");
+            for(int bone=0;bone<rig.count;++bone) for(int row=0;row<3;++row) for(int column=0;column<4;++column)
+                Check(std::fabs(before.pose[bone][row][column]-after.pose[bone][row][column])<0.001f,"zombie cut jumped the corpse pose");
+            Check(bool(RD_Frozen(1))==bool(asleep),"zombie cut changed sleep state");
+        }
+        Check(RD_BodyCount(1)>0,"fully dismembered torso has no colliders");
+        rd_snapshot state;RD_Capture(1,&state);RD_Remove(1);
+        Check(RD_Restore(1,2,rig.bones,(int)rig.boxes.size(),rig.boxes.data(),&state),"dismembered zombie restore failed");
+        for(int group:groups) Check(RD_RemoveGroup(1,group)>0,"restored zombie cut failed");
+        Check(RD_BodyCount(1)>0,"restored torso lost colliders");
+    }
+    // Read each bank submodel directly: the bank deliberately has no actor
+    // hitboxes, and its geometry is rigidly attached to the identity root.
+    std::ifstream file(directory+"/zombie_parts.mdl",std::ios::binary);Check(bool(file),"parts bank unavailable");
+    std::vector<char> d((std::istreambuf_iterator<char>(file)),std::istreambuf_iterator<char>());
+    Check(Int(d,140)==1 && Int(d,156)==0 && Int(d,204)==5,"invalid parts bank layout");
+    const int table=Int(d,208);int tested=0;
+    for(int part=0;part<5;++part) for(int appearance=0;appearance<11;++appearance) {
+        const int group=table+part*76;
+        Check(Int(d,group+64)==12,"parts bank appearance count mismatch");
+        const int model=Int(d,group+72)+(appearance+1)*112;
+        const int count=Int(d,model+80),vertices=Int(d,model+88);
+        if(count==0) {Check(part==0 && (appearance==1 || appearance==3),"unexpected empty detached asset");continue;}
+        Check(count>=4 && size_t(vertices)+size_t(count)*12<=d.size(),"invalid detached vertices");
+        const auto points=reinterpret_cast<const float (*)[3]>(d.data()+vertices);
+        Floor();rd_bone root={};root.parent=-1;std::strcpy(root.name,"dismemberment_root");
+        rd_matrix pose[1];Identity(pose[0]);pose[0][2][3]=90;
+        float velocity[3]={100,20,70},angular[3]={120,-80,30};
+        Check(RD_CreateProp(1,1,1,&root,pose,count,points,velocity,angular),"detached zombie asset rejected by physics");
+        Step(60,20);Check(RD_Frozen(1),"detached zombie asset failed to settle");
+        rd_matrix settled[1];Check(RD_Pose(1,settled,1),"detached zombie pose missing");
+        float lowest=std::numeric_limits<float>::max();
+        for(int i=0;i<count;++i) {float z=settled[0][2][3];for(int axis=0;axis<3;++axis) z+=settled[0][2][axis]*points[i][axis];lowest=std::min(lowest,z);}
+        Check(lowest>=-0.12f,"detached zombie visible mesh clips floor");
+        float hit[3]={settled[0][0][3],settled[0][1][3],settled[0][2][3]},kick[3]={0,100,80};
+        RD_Impulse(1,hit,kick);Check(!RD_Frozen(1),"detached zombie asset cannot wake");++tested;
+    }
+    Check(tested==53,"wrong number of detached zombie assets tested");
+    std::cout<<"PASS all five zombie cuts while active/asleep, sequential cuts/restore and 53 bank assets floor/settle/wake\n";
+}
 static void TimeoutTests() {
     RD_Reset();auto rig=Synthetic();Create(rig);RD_Step(0,0);
     // Keep the assembly active without floor contacts. Repeated damage used
@@ -312,6 +366,7 @@ int main(int argc,char **argv) {
         rig.bones[1].parent=2;Check(!RD_Create(1,1,rig.count,rig.bones,(int)rig.boxes.size(),rig.boxes.data(),rig.pose,v,0),"invalid hierarchy accepted");
         std::cout<<"PASS duplicate death, entity reuse, gib/removal, budget, map reset, malformed hierarchy\n";
         if(argc>1) {
+            ZombiePartsTests(argv[1]);
             int failures = 0;
             const char *models[]={"zombie","zombie_headless","zombie2","zombie2_headless","zombie3","zombie3_headless","zombie_fresh","zombie_fresh_headless","lpzombie","lpzombie_headless","nurse","nurse_headless","nursezombie","nursezombie_headless","hgrunt","hgrunt_headless","zgrunt","zgrunt_headless","agrunt","islave","babykelly","zombiebull","hungercrab","houndeye_killfx","houndeye_headless","bullsquid","megasquid","chicken","thehand","../allies/barney","../allies/barney_headless"};
             for(const char *name:models) {
