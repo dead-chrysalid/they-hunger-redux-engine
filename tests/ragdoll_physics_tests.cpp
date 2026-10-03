@@ -395,6 +395,10 @@ int main(int argc,char **argv) {
             ZombiePartsTests(argv[1]);
             ZombiePartsTests(argv[1],"zombie_fresh",11,1<<1);
             ZombiePartsTests(argv[1],"../allies/barney",1,0);
+            ZombiePartsTests(argv[1],"zombie2",6,0);
+            ZombiePartsTests(argv[1],"zombie3",5,0);
+            ZombiePartsTests(argv[1],"nurse",2,0);
+            ZombiePartsTests(argv[1],"nursezombie",2,0);
             int failures = 0;
             const char *models[]={"zombie","zombie_headless","zombie2","zombie2_headless","zombie3","zombie3_headless","zombie_fresh","zombie_fresh_headless","lpzombie","lpzombie_headless","nurse","nurse_headless","nursezombie","nursezombie_headless","hgrunt","hgrunt_headless","zgrunt","zgrunt_headless","agrunt","islave","babykelly","zombiebull","hungercrab","houndeye_killfx","houndeye_headless","bullsquid","megasquid","chicken","thehand","../allies/barney","../allies/barney_headless"};
             for(const char *name:models) {
