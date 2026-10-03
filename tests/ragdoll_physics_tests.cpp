@@ -476,7 +476,24 @@ static void LivingActorContactTests() {
     }
     Check(woke,"moving living actor failed to wake a resting part");
     RD_Pose(1,pose,rig.count);Check(std::fabs(pose[0][0][3])>5,"moving actor did not displace resting part");
-    std::cout<<"PASS live actor rebound, no tunneling, collider retirement and waking/displacing resting props\n";
+    // A 320-unit/second actor at 20 FPS must not be interpreted as moving
+    // 1920 units/second by the first fixed physics tick in each frame.
+    Floor();lo[0]=40;hi[0]=56;hi[2]=96;RD_ActorBounds(100,lo,hi);
+    Check(RD_CreateProp(1,1,rig.count,rig.bones,rig.pose,8,points,zero,zero),"slow frame prop creation failed");
+    RD_ThrowProp(1,1,velocity);RD_Step(0,800);
+    for(int frame=1;frame<=5;++frame) {
+        lo[0]=40-16.0f*frame;hi[0]=lo[0]+16;RD_ActorBounds(100,lo,hi);
+        RD_Step(frame*0.05,800);rd_snapshot state;
+        Check(RD_Capture(1,&state),"slow frame prop state missing");
+        Check(std::fabs(state.linear[0][0])<900,"moving actor amplified a low-frame-rate rebound");
+    }
+    // Actor relocation across idle frames must not build up a later impulse.
+    Floor();lo[0]=100;hi[0]=116;RD_ActorBounds(100,lo,hi);RD_Step(0,800);
+    lo[0]=0;hi[0]=16;RD_ActorBounds(100,lo,hi);RD_Step(1,800);
+    Check(RD_CreateProp(1,1,rig.count,rig.bones,rig.pose,8,points,zero,zero),"idle actor prop creation failed");
+    RD_Step(1.05,800);rd_snapshot idleState;RD_Capture(1,&idleState);
+    Check(std::fabs(idleState.linear[0][0])<100,"idle actor relocation produced a ghost velocity");
+    std::cout<<"PASS live actor rebound, no tunneling, collider retirement, resting prop wake and bounded slow-frame/idle contacts\n";
 }
 static void PileTest(const std::string &directory) {
     Floor();auto source=Model(directory+"/zombie.mdl");

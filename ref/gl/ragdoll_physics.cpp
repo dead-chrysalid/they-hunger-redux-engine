@@ -83,6 +83,7 @@ struct Physics {
         std::unique_ptr<btDefaultMotionState> motion;
         std::unique_ptr<btRigidBody> body;
         btVector3 half;
+        btVector3 sampledOrigin,velocity=btVector3(0,0,0);
     };
     std::unordered_map<int,std::unique_ptr<Actor>> actors;
     double lastTime = -1, accumulator = 0;
@@ -146,6 +147,7 @@ extern "C" void RD_ActorBounds(int entity,const float *mins,const float *maxs) {
     if(entry!=p.actors.end() && (entry->second->half-half).length2()>0.000001f) {RD_RemoveActor(entity);entry=p.actors.end();}
     if(entry==p.actors.end()) {
         std::unique_ptr<Physics::Actor> actor(new Physics::Actor);actor->half=half;
+        actor->sampledOrigin=transform.getOrigin();
         actor->shape.reset(new btBoxShape(half));actor->shape->setMargin(0.005f);
         actor->motion.reset(new btDefaultMotionState(transform));
         btRigidBody::btRigidBodyConstructionInfo info(0,actor->motion.get(),actor->shape.get());
@@ -478,7 +480,7 @@ extern "C" int RD_CreateProp(int entity,float token,int count,const rd_bone *bon
     part.body->setDamping(0.04f,0.12f);
     part.linearDamping=0.04f;part.angularDamping=0.12f;
     part.body->setSleepingThresholds(0.05f,0.08f);
-    // No actor/player bodies enter this world: props touch world brushes and corpses only.
+    // Living enemy hulls also collide with props; players remain nonblocking.
     part.body->setRestitution(0.3f);
     p.world.addRigidBody(part.body.get(),CorpseGroup,WorldGroup|CorpseGroup|ActorGroup);
     return 1;
@@ -486,10 +488,25 @@ extern "C" int RD_CreateProp(int entity,float token,int count,const rd_bone *bon
 extern "C" void RD_Step(double time, float gravity) {
     if (!physics || !std::isfinite(time)) return;
     auto &p = *physics;
-    if (p.lastTime < 0 || time < p.lastTime) { p.lastTime = time; p.accumulator = 0; return; }
-    double dt = std::min(0.1, time - p.lastTime);
+    if (p.lastTime < 0 || time < p.lastTime) {
+        p.lastTime = time; p.accumulator = 0;
+        for(auto &entry:p.actors)entry.second->sampledOrigin=entry.second->body->getWorldTransform().getOrigin();
+        return;
+    }
+    const double frameDt=time-p.lastTime;
+    double dt = std::min(0.1, frameDt);
     p.lastTime = time;
     if (dt <= 0) return;
+    for(auto &entry:p.actors) {
+        auto &actor=*entry.second;
+        const btVector3 origin=actor.body->getWorldTransform().getOrigin(),travel=origin-actor.sampledOrigin;
+        // Network/render movement spans a frame, not a single 120 Hz tick.
+        // Teleports must not impart a fictitious collision velocity.
+        actor.velocity=travel.length2()>std::pow(64*Scale,2)?btVector3(0,0,0):travel/btScalar(frameDt);
+        const btScalar maxSpeed=400*Scale;
+        if(actor.velocity.length2()>maxSpeed*maxSpeed)actor.velocity*=maxSpeed/actor.velocity.length();
+        actor.sampledOrigin=origin;
+    }
     if (!std::isfinite(gravity)) gravity = 800;
     p.world.setGravity(btVector3(0, 0, -std::max(0.0f, gravity) * Scale));
     const int activeBodies=RD_ActiveBodies();
@@ -504,6 +521,13 @@ extern "C" void RD_Step(double time, float gravity) {
     p.world.getSolverInfo().m_numIterations=activeBodies>240?32:activeBodies>96?48:80;
     const double step = 1.0 / 120.0;
     while (p.accumulator + 1e-9 >= step) {
+        for(auto &entry:p.actors) {
+            auto &actor=*entry.second;
+            btTransform previous=actor.body->getWorldTransform();
+            previous.getOrigin()-=actor.velocity*btScalar(step);
+            // Bullet derives kinematic velocity from this transform each tick.
+            actor.body->setInterpolationWorldTransform(previous);
+        }
         for (auto &d : p.dolls) if (!d->frozen) {
             Buoyancy(*d, gravity, (float)step);
             if(d->held) {
@@ -538,6 +562,13 @@ extern "C" void RD_Step(double time, float gravity) {
         }
         p.world.stepSimulation((btScalar)step, 0);
         for (auto &d : p.dolls) if (!d->frozen) {
+            if(!d->held && (d->prop || d->actorContacts))for(auto &part:d->parts) {
+                // Bound exceptional contact impulses without slowing normal throws.
+                btVector3 velocity=part.body->getLinearVelocity(),spin=part.body->getAngularVelocity();
+                const btScalar maxSpeed=1200*Scale;
+                if(velocity.length2()>maxSpeed*maxSpeed)part.body->setLinearVelocity(velocity*(maxSpeed/velocity.length()));
+                if(spin.length2()>30*30)part.body->setAngularVelocity(spin*(30/spin.length()));
+            }
             // Bullet's built-in CCD sweeps an inscribed sphere and misses the
             // toe/sole of a rotating boot. Sweep the full box against brushes.
             for(auto &part:d->parts) if(part.fittedBoot) {
