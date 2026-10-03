@@ -378,6 +378,44 @@ static void DisableTests() {
     Check(!RD_Frozen(1),"preserved corpse cannot wake after re-enabling");
     std::cout<<"PASS disabling physics preserves exact poses without active bodies, and subsequent wake\n";
 }
+static void CarryPartTests() {
+    Floor();auto rig=Synthetic();float zero[3]={},points[8][3];
+    for(int i=0;i<8;++i) for(int a=0;a<3;++a)points[i][a]=(i&(1<<a))?3.0f:-3.0f;
+    Check(RD_CreateProp(1,9,rig.count,rig.bones,rig.pose,8,points,zero,zero),"carry prop creation failed");
+    Step(60,8);Check(RD_Frozen(1),"carry target did not settle");
+    float target[3]={0,0,48};
+    Check(!RD_HoldProp(1,8,target),"stale carry token accepted");
+    float bad[3]={std::numeric_limits<float>::quiet_NaN(),0,48};
+    Check(!RD_HoldProp(1,9,bad),"nonfinite carry target accepted");
+    for(int i=1;i<=240;++i) {
+        if(i%6==1)Check(RD_HoldProp(1,9,target),"carry command failed");
+        RD_Step(8+double(i)/120,800);
+    }
+    rd_matrix pose[RD_MAX_BONES];RD_Pose(1,pose,rig.count);
+    Check(std::fabs(pose[0][2][3]-48)<4,"carried prop did not follow target");
+    // A target beyond a wall must remain blocked by its physical collider.
+    rd_matrix identity;Identity(identity);float a[]={24,-200,0},b[]={24,200,0},c[]={24,200,160},d[]={24,-200,160};
+    RD_BeginMesh(2);RD_AddTriangle(a,b,c);RD_AddTriangle(a,c,d);RD_EndMesh(identity,0);
+    target[0]=60;
+    for(int i=1;i<=240;++i) {
+        if(i%6==1)RD_HoldProp(1,9,target);
+        RD_Step(10+double(i)/120,800);
+    }
+    RD_Pose(1,pose,rig.count);Check(pose[0][0][3]<24,"held part passed through wall");
+    float velocity[]={-450,0,70};
+    Check(!RD_ThrowProp(1,8,velocity),"stale throw token accepted");
+    Check(RD_ThrowProp(1,9,velocity),"throw failed");
+    float before=pose[0][0][3];RD_Step(12.1,800);RD_Pose(1,pose,rig.count);
+    Check(pose[0][0][3]<before-15,"throw did not release with velocity");
+    target[0]=pose[0][0][3];target[2]=48;
+    for(int i=1;i<=120;++i) {if(i%6==1)RD_HoldProp(1,9,target);RD_Step(12.1+double(i)/120,800);}
+    RD_Pose(1,pose,rig.count);float height=pose[0][2][3];
+    for(int i=1;i<=120;++i)RD_Step(13.1+double(i)/120,800);
+    RD_Pose(1,pose,rig.count);Check(pose[0][2][3]<height-10,"missing holder updates leave a floating prop");
+    Create(rig,2,1);Check(!RD_HoldProp(2,1,target),"whole corpse accepted as detachable part");
+    RD_FreezeAll(15);Check(!RD_ActiveBodies(),"disabling physics leaves a held prop active");
+    std::cout<<"PASS part pickup spring, wall collision, throw velocity, stale/invalid input, lost-holder release and corpse exclusion\n";
+}
 static void PileTest(const std::string &directory) {
     Floor();auto source=Model(directory+"/zombie.mdl");
     btTransform rotate(btQuaternion(btVector3(1,0,0),SIMD_HALF_PI),btVector3(0,0,0));
@@ -414,6 +452,7 @@ int main(int argc,char **argv) {
         PropTests();
         TimeoutTests();
         DisableTests();
+        CarryPartTests();
         float a=Simulate(30), b=Simulate(60), c=Simulate(144);
         Check(std::fabs(a-b)<0.01f && std::fabs(a-c)<0.01f,"frame-rate-dependent simulation");
         std::cout<<"PASS fixed 120 Hz, floor collision, constrained joints, finite poses, pause\n";

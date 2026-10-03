@@ -47,6 +47,9 @@ struct Doll {
     btVector3 previousPosition[RD_MAX_BODIES];
     btQuaternion previousRotation[RD_MAX_BODIES];
     bool frozen = false, poseDirty = true, boundsDirty = true, prop = false;
+    bool held=false;
+    btVector3 holdTarget;
+    double holdDeadline=0;
     rd_matrix cachedPose[RD_MAX_BONES];
     float mins[3], maxs[3];
     int parent[RD_MAX_BONES], part[RD_MAX_BONES];
@@ -456,6 +459,24 @@ extern "C" void RD_Step(double time, float gravity) {
     while (p.accumulator + 1e-9 >= step) {
         for (auto &d : p.dolls) if (!d->frozen) {
             Buoyancy(*d, gravity, (float)step);
+            if(d->held) {
+                if(time>d->holdDeadline) d->held=false;
+                else {
+                    auto &part=d->parts[0];auto &body=*part.body;
+                    const btVector3 target=d->holdTarget+body.getWorldTransform().getBasis()*part.offset.getOrigin();
+                    const btVector3 delta=target-body.getWorldTransform().getOrigin();
+                    if(delta.length2()>std::pow(96*Scale,2)) d->held=false;
+                    else {
+                        // A damped spring keeps world collision active; no teleport
+                        // through walls or rigid constraint dragging a whole corpse.
+                        btVector3 acceleration=delta*70-body.getLinearVelocity()*14+btVector3(0,0,gravity*Scale);
+                        if(acceleration.length()>120) acceleration*=120/acceleration.length();
+                        body.applyCentralForce(acceleration/body.getInvMass());
+                        body.setAngularVelocity(body.getAngularVelocity()*0.98f);
+                        body.activate(true);d->age=d->stable=d->activeTime=0;
+                    }
+                }
+            }
             for(auto &part:d->parts) if(part.fittedBoot) part.stepStart=part.body->getWorldTransform();
         }
         p.world.stepSimulation((btScalar)step, 0);
@@ -604,8 +625,25 @@ static void Wake(Doll &d) {
 }
 extern "C" void RD_FreezeAll(double time) {
     if(!physics) return;
-    for(auto &d:physics->dolls) Freeze(*d);
+    for(auto &d:physics->dolls) {d->held=false;Freeze(*d);}
     physics->lastTime=time;physics->accumulator=0;
+}
+extern "C" int RD_HoldProp(int entity,float token,const float *target) {
+    Doll *d=physics?physics->find(entity):nullptr;
+    if(!d || !d->prop || d->token!=token || !target)return 0;
+    for(int i=0;i<3;++i)if(!std::isfinite(target[i]))return 0;
+    Wake(*d);d->held=true;d->holdTarget=Vec(target);d->holdDeadline=physics->lastTime+0.25;
+    return 1;
+}
+extern "C" int RD_ThrowProp(int entity,float token,const float *velocity) {
+    Doll *d=physics?physics->find(entity):nullptr;
+    if(!d || !d->prop || d->token!=token || !velocity)return 0;
+    for(int i=0;i<3;++i)if(!std::isfinite(velocity[i]))return 0;
+    d->held=false;Wake(*d);d->age=d->stable=d->activeTime=0;
+    btVector3 v=Vec(velocity);if(v.length()>16)v*=16/v.length();
+    d->parts[0].body->setLinearVelocity(v);
+    d->parts[0].body->setAngularVelocity(v.fuzzyZero()?btVector3(0,0,0):btVector3(2,3,1));
+    return 1;
 }
 static void Buoyancy(Doll &d, float gravity, float dt) {
     (void)dt;

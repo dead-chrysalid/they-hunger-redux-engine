@@ -113,6 +113,16 @@ static void R_RagdollImpulse(void) {
     for (i=0; i<3; ++i) { point[i]=Q_atof(gEngfuncs.Cmd_Argv(i+2)); kick[i]=Q_atof(gEngfuncs.Cmd_Argv(i+5)); }
     RD_Impulse(entity,point,kick);
 }
+static void R_RagdollPartUse(void) {
+    int entity;float token;vec3_t vector;cl_entity_t *e;int i;
+    if(!enabled || !enabled->value || !ENGINE_GET_PARM(PARM_LOCAL_GAME) || gEngfuncs.Cmd_Argc()!=6) return;
+    entity=Q_atoi(gEngfuncs.Cmd_Argv(1));token=Q_atof(gEngfuncs.Cmd_Argv(2));
+    e=gEngfuncs.GetEntityByIndex(entity);
+    if(!e || e->curstate.iuser4!=RD_PROP_MARKER || e->curstate.fuser4!=token) return;
+    for(i=0;i<3;++i)vector[i]=Q_atof(gEngfuncs.Cmd_Argv(3+i));
+    if(!Q_strcmp(gEngfuncs.Cmd_Argv(0),"ragdoll_hold")) RD_HoldProp(entity,token,vector);
+    else RD_ThrowProp(entity,token,vector);
+}
 int EXPORT Ragdoll_Trace(const float *start,const float *end,float limit,rd_hit *hit) {
     return enabled && enabled->value && mapReady && ENGINE_GET_PARM(PARM_LOCAL_GAME) && RD_Trace(start,end,limit,hit);
 }
@@ -200,6 +210,8 @@ void R_RagdollInit(void) {
         gEngfuncs.Cmd_AddCommand("ragdoll_impulse",R_RagdollImpulse,"Apply a local corpse hit impulse");
         gEngfuncs.Cmd_AddCommand("ragdoll_remove_arm",R_RagdollRemoveGroup,"Remove cop pilot arm colliders");
         gEngfuncs.Cmd_AddCommand("ragdoll_remove_part",R_RagdollRemovePart,"Remove a detached head or limb collider group");
+        gEngfuncs.Cmd_AddCommand("ragdoll_hold",R_RagdollPartUse,"Carry a local detached part with collision");
+        gEngfuncs.Cmd_AddCommand("ragdoll_throw",R_RagdollPartUse,"Release and throw a local detached part");
         registered = 1;
     }
 }
@@ -223,6 +235,7 @@ void R_RagdollShutdown(void) {
     RD_Reset(); mapReady = 0;
     memset(poses, 0, sizeof(poses)); memset(brushes, 0, sizeof(brushes));
     if (registered) { gEngfuncs.Cmd_RemoveCommand("ragdoll_status"); gEngfuncs.Cmd_RemoveCommand("ragdoll_impulse"); gEngfuncs.Cmd_RemoveCommand("ragdoll_remove_arm"); gEngfuncs.Cmd_RemoveCommand("ragdoll_remove_part"); }
+    if (registered) {gEngfuncs.Cmd_RemoveCommand("ragdoll_hold");gEngfuncs.Cmd_RemoveCommand("ragdoll_throw");}
     restoredCount=0; restoredMap[0]=0;
     registered = 0; enabled = debug = NULL;
 }
