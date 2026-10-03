@@ -118,7 +118,11 @@ static void R_RagdollPartUse(void) {
     if(!enabled || !enabled->value || !ENGINE_GET_PARM(PARM_LOCAL_GAME) || gEngfuncs.Cmd_Argc()!=6) return;
     entity=Q_atoi(gEngfuncs.Cmd_Argv(1));token=Q_atof(gEngfuncs.Cmd_Argv(2));
     e=gEngfuncs.GetEntityByIndex(entity);
-    if(!e || e->curstate.iuser4!=RD_PROP_MARKER || e->curstate.fuser4!=token) return;
+    // fuser4 is sent at 1/1000-second precision; the server command carries
+    // the original float. Validate within that network quantum, then use the
+    // client token that actually created this physics body.
+    if(!e || e->curstate.iuser4!=RD_PROP_MARKER || !RD_CommandTokenMatches(e->curstate.fuser4,token)) return;
+    token=e->curstate.fuser4;
     for(i=0;i<3;++i)vector[i]=Q_atof(gEngfuncs.Cmd_Argv(3+i));
     if(!Q_strcmp(gEngfuncs.Cmd_Argv(0),"ragdoll_hold")) RD_HoldProp(entity,token,vector);
     else RD_ThrowProp(entity,token,vector);

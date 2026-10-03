@@ -9,6 +9,11 @@ extern "C" {
 #define RD_MAX_BODIES 64
 #define RD_MAX_CORPSES 64
 #define RD_MAX_PROPS 128
+/* Account for delta.lst's 1000x float quantization without accepting stale IDs. */
+static int RD_CommandTokenMatches(float clientToken,float serverToken) {
+    const float delta=clientToken-serverToken;
+    return delta>=-0.0011f && delta<=0.0011f;
+}
 typedef float rd_matrix[3][4];
 typedef struct {
     int parent;

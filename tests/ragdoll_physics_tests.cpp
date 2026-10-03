@@ -379,6 +379,10 @@ static void DisableTests() {
     std::cout<<"PASS disabling physics preserves exact poses without active bodies, and subsequent wake\n";
 }
 static void CarryPartTests() {
+    const float serverToken=9.12387f,clientToken=float(int(serverToken*1000))/1000;
+    Check(clientToken!=serverToken && RD_CommandTokenMatches(clientToken,serverToken),"network-rounded carry ID rejected");
+    Check(!RD_CommandTokenMatches(clientToken,serverToken+0.02f),"stale network carry ID accepted");
+    Check(!RD_CommandTokenMatches(clientToken,std::numeric_limits<float>::quiet_NaN()),"invalid network carry ID accepted");
     Floor();auto rig=Synthetic();float zero[3]={},points[8][3];
     for(int i=0;i<8;++i) for(int a=0;a<3;++a)points[i][a]=(i&(1<<a))?3.0f:-3.0f;
     Check(RD_CreateProp(1,9,rig.count,rig.bones,rig.pose,8,points,zero,zero),"carry prop creation failed");
