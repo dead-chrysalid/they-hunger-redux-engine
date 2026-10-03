@@ -392,7 +392,7 @@ static void CarryPartTests() {
     float bad[3]={std::numeric_limits<float>::quiet_NaN(),0,48};
     Check(!RD_HoldProp(1,9,bad),"nonfinite carry target accepted");
     for(int i=1;i<=240;++i) {
-        if(i>210)target[0]=12*std::sin(float(240-i)*0.15f);
+        if(i>210)target[0]=12*std::sin(float(i-210)*0.15f);
         if(i%6==1 || i>210)Check(RD_HoldProp(1,9,target),"carry command failed");
         RD_Step(8+double(i)/120,800);
         if(i>210) {
