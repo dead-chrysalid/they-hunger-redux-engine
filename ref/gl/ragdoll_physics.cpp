@@ -626,7 +626,11 @@ static void Wake(Doll &d) {
 }
 extern "C" void RD_FreezeAll(double time) {
     if(!physics) return;
-    for(auto &d:physics->dolls) {d->held=false;Freeze(*d);}
+    for(auto &d:physics->dolls) {
+        d->held=false;
+        if(d->prop)d->parts[0].body->setCcdMotionThreshold(0);
+        Freeze(*d);
+    }
     physics->lastTime=time;physics->accumulator=0;
 }
 extern "C" int RD_HoldProp(int entity,float token,const float *target) {
