@@ -290,12 +290,12 @@ static void PropTests() {
     Check(!RD_CreateProp(1,2,rig.count,rig.bones,rig.pose,8,points,velocity,angular),"malformed prop accepted");
     std::cout<<"PASS rigid convex prop floor contact, settling, intact skeleton, hit wake, removal and malformed input\n";
 }
-static void ZombiePartsTests(const std::string &directory) {
+static void ZombiePartsTests(const std::string &directory,const std::string &family="zombie",int appearances=11,int headlessMask=(1<<1)|(1<<3)) {
     // Exercise all anatomical groups on the actual shipped zombie skeleton,
     // both while falling and after sleeping. Torso colliders must survive.
     const int groups[]={1,4,5,6,7};
     for(int asleep=0;asleep<2;++asleep) {
-        Floor();auto rig=Model(directory+"/zombie.mdl");Create(rig);
+        Floor();auto rig=Model(directory+"/"+family+".mdl");Create(rig);
         if(asleep) {Step(60,20);Check(RD_Frozen(1),"zombie cut test failed to settle");}
         for(int group:groups) {
             rd_snapshot before,after;Check(RD_Capture(1,&before),"zombie pre-cut snapshot unavailable");
@@ -317,18 +317,18 @@ static void ZombiePartsTests(const std::string &directory) {
     }
     // Read each bank submodel directly: the bank deliberately has no actor
     // hitboxes, and its geometry is rigidly attached to the identity root.
-    std::ifstream file(directory+"/zombie_parts.mdl",std::ios::binary);Check(bool(file),"parts bank unavailable");
+    std::ifstream file(directory+"/"+family+"_parts.mdl",std::ios::binary);Check(bool(file),"parts bank unavailable");
     std::vector<char> d((std::istreambuf_iterator<char>(file)),std::istreambuf_iterator<char>());
     Check(Int(d,140)==1 && Int(d,156)==0 && Int(d,204)==5,"invalid parts bank layout");
     const int residentLimit=Int(d,188);Check(residentLimit>=244 && size_t(residentLimit)<=d.size(),"invalid parts texture boundary");
     d.resize(residentLimit);
     const int table=Int(d,208);int tested=0;
-    for(int part=0;part<5;++part) for(int appearance=0;appearance<11;++appearance) {
+    for(int part=0;part<5;++part) for(int appearance=0;appearance<appearances;++appearance) {
         const int group=table+part*76;
-        Check(Int(d,group+64)==12,"parts bank appearance count mismatch");
+        Check(Int(d,group+64)==appearances+1,"parts bank appearance count mismatch");
         const int model=Int(d,group+72)+(appearance+1)*112;
         const int count=Int(d,model+80),vertices=Int(d,model+88);
-        if(count==0) {Check(part==0 && (appearance==1 || appearance==3),"unexpected empty detached asset");continue;}
+        if(count==0) {Check(part==0 && (headlessMask & (1<<appearance)),"unexpected empty detached asset");continue;}
         Check(count>=4 && size_t(vertices)+size_t(count)*12<=d.size(),"invalid detached vertices");
         const auto points=reinterpret_cast<const float (*)[3]>(d.data()+vertices);
         Floor();rd_bone root={};root.parent=-1;std::strcpy(root.name,"dismemberment_root");
@@ -343,8 +343,9 @@ static void ZombiePartsTests(const std::string &directory) {
         float hit[3]={settled[0][0][3],settled[0][1][3],settled[0][2][3]},kick[3]={0,100,80};
         RD_Impulse(1,hit,kick);Check(!RD_Frozen(1),"detached zombie asset cannot wake");++tested;
     }
-    Check(tested==53,"wrong number of detached zombie assets tested");
-    std::cout<<"PASS all five zombie cuts while active/asleep, sequential cuts/restore and 53 bank assets floor/settle/wake\n";
+    int missing=0;for(int v=0;v<appearances;++v) if(headlessMask & (1<<v)) ++missing;
+    Check(tested==appearances*5-missing,"wrong number of detached zombie assets tested");
+    std::cout<<"PASS "<<family<<": all five cuts active/asleep, sequential cuts/restore and "<<tested<<" bank assets floor/settle/wake\n";
 }
 static void TimeoutTests() {
     RD_Reset();auto rig=Synthetic();Create(rig);RD_Step(0,0);
@@ -386,6 +387,8 @@ int main(int argc,char **argv) {
         std::cout<<"PASS duplicate death, entity reuse, gib/removal, budget, map reset, malformed hierarchy\n";
         if(argc>1) {
             ZombiePartsTests(argv[1]);
+            ZombiePartsTests(argv[1],"zombie_fresh",11,1<<1);
+            ZombiePartsTests(argv[1],"../allies/barney",1,0);
             int failures = 0;
             const char *models[]={"zombie","zombie_headless","zombie2","zombie2_headless","zombie3","zombie3_headless","zombie_fresh","zombie_fresh_headless","lpzombie","lpzombie_headless","nurse","nurse_headless","nursezombie","nursezombie_headless","hgrunt","hgrunt_headless","zgrunt","zgrunt_headless","agrunt","islave","babykelly","zombiebull","hungercrab","houndeye_killfx","houndeye_headless","bullsquid","megasquid","chicken","thehand","../allies/barney","../allies/barney_headless"};
             for(const char *name:models) {

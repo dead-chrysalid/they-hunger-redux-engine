@@ -57,16 +57,16 @@ static void R_RagdollApplyMissingParts(cl_entity_t *e) {
     for(group=1;group<=7;++group) if(mask & (1u<<group)) RD_RemoveGroup(e->index,group);
 }
 static void R_RagdollRemovePart(void) {
-    int entity,group;cl_entity_t *e;studiohdr_t *h;mstudiobodyparts_t *parts;
+    int entity,group,part;cl_entity_t *e;studiohdr_t *h;mstudiobodyparts_t *parts;
     if(!enabled || !enabled->value || !ENGINE_GET_PARM(PARM_LOCAL_GAME) || gEngfuncs.Cmd_Argc()!=3) return;
     entity=Q_atoi(gEngfuncs.Cmd_Argv(1));group=Q_atoi(gEngfuncs.Cmd_Argv(2));
     if(group!=1 && group!=4 && group!=5 && group!=6 && group!=7) return;
     e=gEngfuncs.GetEntityByIndex(entity);
     if(!e || !e->model || e->curstate.iuser4!=RD_MARKER || !e->curstate.iuser3) return;
     h=(studiohdr_t *)gEngfuncs.Mod_Extradata(mod_studio,e->model);
-    if(!h || h->numbodyparts!=6) return;
+    if(!h || h->numbodyparts<6 || h->numbodyparts>32) return;
     parts=(mstudiobodyparts_t *)((byte *)h+h->bodypartindex);
-    if(!Q_strcmp(parts[1].name,"dm_head")) RD_RemoveGroup(entity,group);
+    for(part=0;part<h->numbodyparts;++part) if(!Q_strcmp(parts[part].name,"dm_head")) {RD_RemoveGroup(entity,group);break;}
 }
 static void R_RagdollRemoveGroup(void) {
     if(enabled && enabled->value && ENGINE_GET_PARM(PARM_LOCAL_GAME) && gEngfuncs.Cmd_Argc()==2) {
