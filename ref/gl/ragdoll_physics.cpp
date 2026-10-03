@@ -465,12 +465,12 @@ extern "C" void RD_Step(double time, float gravity) {
                     auto &part=d->parts[0];auto &body=*part.body;
                     const btVector3 target=d->holdTarget;
                     const btVector3 delta=target-body.getWorldTransform().getOrigin();
-                    if(delta.length2()>std::pow(96*Scale,2)) d->held=false;
+                    if(delta.length2()>std::pow(256*Scale,2)) d->held=false;
                     else {
                         // Reach the camera target in one physics tick when clear.
                         // Contacts and CCD resolve walls before the body can move.
                         btVector3 velocity=delta/btScalar(step);
-                        if(velocity.length()>25)velocity*=25/velocity.length();
+                        if(velocity.length()>80)velocity*=80/velocity.length();
                         body.setLinearVelocity(velocity);
                         body.setAngularVelocity(btVector3(0,0,0));
                         body.activate(true);d->age=d->stable=d->activeTime=0;
