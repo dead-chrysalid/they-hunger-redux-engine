@@ -258,7 +258,7 @@ static int CreateDoll(int entity, float token, int count, const rd_bone *bones,
         float height = std::max(0.0f, 2.0f * (half[axis] - radius));
         // Broad trunks need a contact patch rather than a single rounded
         // capsule contact (notably the enlarged megasquid torso and tail).
-        const bool contactPatch=!oversized && HasName(bones[i].name,"bip01") &&
+        const bool contactPatch=!oversized && (HasName(bones[i].name,"bip01") || HasName(bones[i].name,"bip02")) &&
             (HasName(bones[i].name,"spine") || HasName(bones[i].name,"pelvis") || HasName(bones[i].name,"foot"));
         const bool footPatch=contactPatch && HasName(bones[i].name,"foot");
         const bool fittedBoot=footPatch && (part.group==6 || part.group==7);
