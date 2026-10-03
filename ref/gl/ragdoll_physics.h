@@ -46,6 +46,8 @@ void RD_AddTriangle(const float *a, const float *b, const float *c);
 void RD_EndMesh(const rd_matrix transform, int kinematic);
 void RD_MoveMesh(int key, const rd_matrix transform);
 void RD_RemoveMesh(int key);
+void RD_ActorBounds(int entity,const float *mins,const float *maxs);
+void RD_RemoveActor(int entity);
 int RD_Create(int entity, float token, int count, const rd_bone *bones,
     int hitboxCount, const rd_hitbox *hitboxes, const rd_matrix *pose,
     const float *velocity, int hitgroup);

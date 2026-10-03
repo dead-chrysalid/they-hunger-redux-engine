@@ -446,6 +446,32 @@ static void HeadcrabCarryTest(const std::string &directory) {
     Check(after[0][0][3]>before[0][0][3]+10,"headcrab did not move after throw");
     std::cout<<"PASS authored headcrab carry, rotation, joint integrity and throw\n";
 }
+static void LivingActorContactTests() {
+    Floor();auto rig=Synthetic();float zero[3]={},points[8][3],velocity[3]={500,0,0};
+    for(int i=0;i<8;++i)for(int a=0;a<3;++a)points[i][a]=(i&(1<<a))?3.0f:-3.0f;
+    float lo[3]={24,-16,0},hi[3]={40,16,96};RD_ActorBounds(100,lo,hi);
+    Check(RD_CreateProp(1,1,rig.count,rig.bones,rig.pose,8,points,zero,zero),"actor contact prop creation failed");
+    Check(RD_ThrowProp(1,1,velocity),"actor contact throw failed");RD_Step(0,800);
+    rd_matrix pose[RD_MAX_BONES];
+    for(int i=1;i<=60;++i) {
+        RD_Step(double(i)/120,800);RD_Pose(1,pose,rig.count);
+        Check(pose[0][0][3]<24,"thrown part passed through living actor hull");
+    }
+    Check(pose[0][0][3]<15,"living actor did not rebound thrown part");
+    RD_RemoveActor(100);
+    Check(RD_CreateProp(1,2,rig.count,rig.bones,rig.pose,8,points,zero,zero),"actor removal prop reuse failed");
+    RD_ThrowProp(1,2,velocity);
+    for(int i=1;i<=30;++i)RD_Step(0.5+double(i)/120,800);
+    RD_Pose(1,pose,rig.count);Check(pose[0][0][3]>50,"removed living actor left a ghost collider");
+    Floor();Check(RD_CreateProp(1,1,rig.count,rig.bones,rig.pose,8,points,zero,zero),"moving actor prop creation failed");
+    Step(60,8);Check(RD_Frozen(1),"moving actor target failed to settle");
+    lo[0]=-40;hi[0]=-24;hi[2]=72;RD_ActorBounds(100,lo,hi);
+    lo[0]=-12;hi[0]=4;RD_ActorBounds(100,lo,hi);
+    Check(!RD_Frozen(1),"moving living actor failed to wake a resting part");
+    for(int i=1;i<=60;++i)RD_Step(8+double(i)/120,800);
+    RD_Pose(1,pose,rig.count);Check(std::fabs(pose[0][0][3])>5,"moving actor did not displace resting part");
+    std::cout<<"PASS live actor rebound, no tunneling, collider retirement and waking/displacing resting props\n";
+}
 static void PileTest(const std::string &directory) {
     Floor();auto source=Model(directory+"/zombie.mdl");
     btTransform rotate(btQuaternion(btVector3(1,0,0),SIMD_HALF_PI),btVector3(0,0,0));
@@ -483,6 +509,7 @@ int main(int argc,char **argv) {
         TimeoutTests();
         DisableTests();
         CarryPartTests();
+        LivingActorContactTests();
         float a=Simulate(30), b=Simulate(60), c=Simulate(144);
         Check(std::fabs(a-b)<0.01f && std::fabs(a-c)<0.01f,"frame-rate-dependent simulation");
         std::cout<<"PASS fixed 120 Hz, floor collision, constrained joints, finite poses, pause\n";

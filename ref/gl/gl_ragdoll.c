@@ -14,6 +14,7 @@ static int R_PhysicsEntity(cl_entity_t *e) {
 }
 #define RD_POSE_CACHE 256
 #define RD_BRUSH_LIMIT 2048
+static unsigned char actorColliders[RD_BRUSH_LIMIT];
 typedef struct {
     int entity, count;
     model_t *model;
@@ -239,6 +240,7 @@ void R_RagdollInit(void) {
 }
 void R_RagdollNewMap(void) {
     heldPartEntity=0;
+    memset(actorColliders,0,sizeof(actorColliders));
     matrix3x4 identity;
     RD_Reset();
     memset(poses, 0, sizeof(poses)); memset(brushes, 0, sizeof(brushes));
@@ -268,6 +270,7 @@ void R_RagdollFrame(void) {
     if (!enabled || !enabled->value) {
         heldPartEntity=0;
         if (mapReady) RD_FreezeAll(gpGlobals->time);
+        for(i=1;i<RD_BRUSH_LIMIT;++i)if(actorColliders[i]) {RD_RemoveActor(i);actorColliders[i]=0;}
         return;
     }
     if (!RI.drawWorld || !ENGINE_GET_PARM(PARM_LOCAL_GAME)) return;
@@ -277,6 +280,15 @@ void R_RagdollFrame(void) {
     for (i = 1; i < count && i < RD_BRUSH_LIMIT; ++i) {
         cl_entity_t *e = gEngfuncs.GetEntityByIndex(i);
         matrix3x4 transform;
+        cl_entity_t *player=gEngfuncs.GetLocalPlayer();
+        if(e && !e->player && e->model && e->model->type==mod_studio &&
+            e->curstate.iuser4==RD_MARKER && !e->curstate.iuser3 &&
+            e->curstate.solid!=SOLID_NOT && e->curstate.solid!=SOLID_TRIGGER &&
+            !(e->curstate.effects & EF_NODRAW) &&
+            (!player || player->curstate.messagenum<=0 || e->curstate.messagenum==player->curstate.messagenum)) {
+            vec3_t lo,hi;VectorAdd(e->origin,e->curstate.mins,lo);VectorAdd(e->origin,e->curstate.maxs,hi);
+            RD_ActorBounds(i,lo,hi);actorColliders[i]=1;
+        } else if(actorColliders[i]) {RD_RemoveActor(i);actorColliders[i]=0;}
         if (!e || !e->model || e->model->type != mod_brush || e->curstate.solid == SOLID_NOT || e->curstate.solid == SOLID_TRIGGER) {
             if (brushes[i]) { RD_RemoveMesh(i); brushes[i] = NULL; }
             continue;
@@ -286,6 +298,7 @@ void R_RagdollFrame(void) {
             R_RagdollMesh(i, e->model, transform, 1); brushes[i] = e->model;
         } else RD_MoveMesh(i, transform);
     }
+    for(i=count;i<RD_BRUSH_LIMIT;++i)if(i>0 && actorColliders[i]) {RD_RemoveActor(i);actorColliders[i]=0;}
     // Fullpacked dead actors carry fresh snapshots even outside the PVS.
     // Retire undrawn restored records too, so deleted corpses cannot consume the budget.
     {

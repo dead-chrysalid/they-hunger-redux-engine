@@ -11,7 +11,7 @@
 
 namespace {
 const float Scale = 0.0254f; // GoldSrc inch -> metre; Z stays up.
-enum { WorldGroup = 1, CorpseGroup = 2 };
+enum { WorldGroup = 1, CorpseGroup = 2, ActorGroup = 4 };
 btVector3 Vec(const float *p) { return btVector3(p[0], p[1], p[2]) * Scale; }
 btTransform Transform(const rd_matrix m) {
     btMatrix3x3 basis(m[0][0], m[0][1], m[0][2], m[1][0], m[1][1], m[1][2], m[2][0], m[2][1], m[2][2]);
@@ -48,6 +48,7 @@ struct Doll {
     btQuaternion previousRotation[RD_MAX_BODIES];
     bool frozen = false, poseDirty = true, boundsDirty = true, prop = false;
     bool held=false;
+    bool actorContacts=false;
     btVector3 holdTarget;
     btQuaternion holdRotation=btQuaternion::getIdentity();
     std::vector<btTransform> holdLocal;
@@ -77,6 +78,13 @@ struct Physics {
     std::unordered_map<int,Doll *> byEntity;
     std::vector<std::unique_ptr<Mesh>> meshes;
     std::unique_ptr<Mesh> pending;
+    struct Actor {
+        std::unique_ptr<btBoxShape> shape;
+        std::unique_ptr<btDefaultMotionState> motion;
+        std::unique_ptr<btRigidBody> body;
+        btVector3 half;
+    };
+    std::unordered_map<int,std::unique_ptr<Actor>> actors;
     double lastTime = -1, accumulator = 0;
     Physics() : dispatcher(&config), world(&dispatcher, &broadphase, &solver, &config) {
         world.setGravity(btVector3(0, 0, -800 * Scale));
@@ -99,6 +107,7 @@ struct Physics {
         meshes.erase(meshes.begin() + i);
     }
     ~Physics() {
+        for(auto &actor:actors)world.removeRigidBody(actor.second->body.get());
         while (!dolls.empty()) removeDoll(dolls.size() - 1);
         while (!meshes.empty()) removeMesh(meshes.size() - 1);
     }
@@ -121,6 +130,41 @@ float LengthScale(const rd_matrix m) {
 }
 }
 
+extern "C" void RD_RemoveActor(int entity) {
+    if(!physics)return;
+    auto entry=physics->actors.find(entity);if(entry==physics->actors.end())return;
+    physics->world.removeRigidBody(entry->second->body.get());physics->actors.erase(entry);
+}
+static void Wake(Doll &d);
+extern "C" void RD_ActorBounds(int entity,const float *mins,const float *maxs) {
+    if(!mins || !maxs)return;
+    for(int i=0;i<3;++i)if(!std::isfinite(mins[i]) || !std::isfinite(maxs[i]) || maxs[i]<=mins[i])return;
+    auto &p=Get();btVector3 lo=Vec(mins),hi=Vec(maxs),half=(hi-lo)*0.5f;
+    btTransform transform;transform.setIdentity();transform.setOrigin((hi+lo)*0.5f);
+    auto entry=p.actors.find(entity);
+    const bool moved=entry==p.actors.end() || (entry->second->body->getWorldTransform().getOrigin()-transform.getOrigin()).length2()>0.000001f;
+    if(entry!=p.actors.end() && (entry->second->half-half).length2()>0.000001f) {RD_RemoveActor(entity);entry=p.actors.end();}
+    if(entry==p.actors.end()) {
+        std::unique_ptr<Physics::Actor> actor(new Physics::Actor);actor->half=half;
+        actor->shape.reset(new btBoxShape(half));actor->shape->setMargin(0.005f);
+        actor->motion.reset(new btDefaultMotionState(transform));
+        btRigidBody::btRigidBodyConstructionInfo info(0,actor->motion.get(),actor->shape.get());
+        actor->body.reset(new btRigidBody(info));actor->body->setWorldTransform(transform);
+        actor->body->setCollisionFlags(btCollisionObject::CF_KINEMATIC_OBJECT);
+        actor->body->setActivationState(DISABLE_DEACTIVATION);
+        actor->body->setRestitution(0.8f);actor->body->setFriction(0.6f);
+        p.world.addRigidBody(actor->body.get(),ActorGroup,CorpseGroup);
+        p.actors.emplace(entity,std::move(actor));
+    } else {
+        entry->second->motion->setWorldTransform(transform);
+        entry->second->body->setWorldTransform(transform);
+        p.world.updateSingleAabb(entry->second->body.get());
+    }
+    if(moved)for(auto &d:p.dolls)if(d->frozen && (d->prop || d->actorContacts)) {
+        btVector3 a,b;d->frozenShape->getAabb(d->frozenBody->getWorldTransform(),a,b);
+        if(a.x()<hi.x() && b.x()>lo.x() && a.y()<hi.y() && b.y()>lo.y() && a.z()<hi.z() && b.z()>lo.z())Wake(*d);
+    }
+}
 extern "C" void RD_Reset(void) { physics.reset(); waterQuery = nullptr; }
 extern "C" void RD_SetWaterQuery(rd_water_query query) { waterQuery = query; }
 extern "C" void RD_BeginMesh(int key) {
@@ -350,7 +394,7 @@ static int CreateDoll(int entity, float token, int count, const rd_bone *bones,
     // Separated limbs still collide with the torso and each other.
     // Oversized legacy creature hitboxes are not anatomical limbs; retain their
     // previous collision policy until they have purpose-built physics proxies.
-    for (auto &part : d->parts) p.world.addRigidBody(part.body.get(), CorpseGroup, WorldGroup | CorpseGroup);
+    for (auto &part : d->parts) p.world.addRigidBody(part.body.get(), CorpseGroup, WorldGroup | CorpseGroup | (isProp?ActorGroup:0));
     for (size_t i = 0; i < d->parts.size(); ++i)
         for (size_t j = i+1; j < d->parts.size(); ++j) {
             int a=d->parts[i].bone,b=d->parts[j].bone;
@@ -435,7 +479,8 @@ extern "C" int RD_CreateProp(int entity,float token,int count,const rd_bone *bon
     part.linearDamping=0.04f;part.angularDamping=0.12f;
     part.body->setSleepingThresholds(0.05f,0.08f);
     // No actor/player bodies enter this world: props touch world brushes and corpses only.
-    p.world.addRigidBody(part.body.get(),CorpseGroup,WorldGroup|CorpseGroup);
+    part.body->setRestitution(0.3f);
+    p.world.addRigidBody(part.body.get(),CorpseGroup,WorldGroup|CorpseGroup|ActorGroup);
     return 1;
 }
 extern "C" void RD_Step(double time, float gravity) {
@@ -616,7 +661,7 @@ static void Freeze(Doll &d) {
     d.frozenBody.reset(new btRigidBody(info)); d.frozenBody->setWorldTransform(root);
     d.frozenBody->setUserIndex(d.entity); d.frozenBody->setUserIndex2(-1);
     d.frozenBody->setFriction(0.8f);
-    physics->world.addRigidBody(d.frozenBody.get(),CorpseGroup,CorpseGroup);
+    physics->world.addRigidBody(d.frozenBody.get(),CorpseGroup,CorpseGroup | ((d.prop || d.actorContacts)?ActorGroup:0));
     d.frozen = true;
 }
 static void Wake(Doll &d) {
@@ -624,7 +669,7 @@ static void Wake(Doll &d) {
     physics->world.removeRigidBody(d.frozenBody.get());
     d.frozenBody.reset(); d.frozenShape.reset();
     for (auto &p : d.parts) {
-        physics->world.addRigidBody(p.body.get(),CorpseGroup,WorldGroup|CorpseGroup);
+        physics->world.addRigidBody(p.body.get(),CorpseGroup,WorldGroup|CorpseGroup | ((d.prop || d.actorContacts)?ActorGroup:0));
         p.body->activate(true); p.waterQueryTime = -1;
     }
     for (auto &j : d.joints) physics->world.addConstraint(j.get(),true);
@@ -649,6 +694,13 @@ extern "C" int RD_HoldProp(int entity,float token,const float *target) {
     if(!d || d->parts.empty() || d->token!=token || !target)return 0;
     for(int i=0;i<3;++i)if(!std::isfinite(target[i]))return 0;
     Wake(*d);
+    if(!d->actorContacts && !d->prop) {
+        d->actorContacts=true;
+        for(auto &part:d->parts) {
+            physics->world.removeRigidBody(part.body.get());
+            physics->world.addRigidBody(part.body.get(),CorpseGroup,WorldGroup|CorpseGroup|ActorGroup);
+        }
+    }
     if(!d->held) {
         btVector3 centre(0,0,0);for(auto &p:d->parts)centre+=p.body->getWorldTransform().getOrigin();
         centre/=btScalar(d->parts.size());d->holdRotation=btQuaternion::getIdentity();d->holdLocal.clear();
@@ -678,6 +730,7 @@ extern "C" int RD_ThrowProp(int entity,float token,const float *velocity) {
     if(d->prop)d->parts[0].body->setCcdMotionThreshold(0);
     btVector3 v=Vec(velocity);if(v.length()>16)v*=16/v.length();
     for(auto &part:d->parts) {
+        if(!v.fuzzyZero())part.body->setRestitution(0.3f);
         part.body->setLinearVelocity(v);
         part.body->setAngularVelocity(v.fuzzyZero()?btVector3(0,0,0):btVector3(2,3,1));
     }
