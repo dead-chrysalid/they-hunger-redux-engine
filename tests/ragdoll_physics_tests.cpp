@@ -299,7 +299,9 @@ static void ZombiePartsTests(const std::string &directory,const std::string &fam
         if(asleep) {Step(60,20);Check(RD_Frozen(1),"zombie cut test failed to settle");}
         for(int group:groups) {
             rd_snapshot before,after;Check(RD_Capture(1,&before),"zombie pre-cut snapshot unavailable");
-            int expected=0;for(const auto &box:rig.boxes) if(box.group==group) ++expected;
+            // Multiple helmet hitboxes on one bone merge into one physical body.
+            bool counted[RD_MAX_BONES]={};int expected=0;
+            for(const auto &box:rig.boxes) if(box.group==group && !counted[box.bone]) {counted[box.bone]=true;++expected;}
             Check(expected>0,"zombie anatomy group has no collider");
             const int bodies=RD_BodyCount(1);
             Check(RD_RemoveGroup(1,group)==expected && RD_BodyCount(1)==bodies-expected,"zombie cut removed wrong colliders");
@@ -624,6 +626,8 @@ int main(int argc,char **argv) {
             ZombiePartsTests(argv[1],"nurse",2,0);
             ZombiePartsTests(argv[1],"nursezombie",2,0);
             ZombiePartsTests(argv[1],"islave",1,0);
+            ZombiePartsTests(argv[1],"hgrunt",4,0);
+            ZombiePartsTests(argv[1],"zgrunt",4,1);
             int failures = 0;
             const char *models[]={"zombie","zombie_headless","zombie2","zombie2_headless","zombie3","zombie3_headless","zombie_fresh","zombie_fresh_headless","lpzombie","lpzombie_headless","nurse","nurse_headless","nursezombie","nursezombie_headless","hgrunt","hgrunt_headless","zgrunt","zgrunt_headless","agrunt","islave","babykelly","zombiebull","hungercrab","houndeye_killfx","houndeye_headless","bullsquid","megasquid","chicken","thehand","../allies/barney","../allies/barney_headless"};
             for(const char *name:models) {
