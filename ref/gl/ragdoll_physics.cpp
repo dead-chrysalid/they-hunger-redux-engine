@@ -2,15 +2,24 @@
  * Original integration; see Documentation/ragdolls.md for research/provenance. */
 #include "ragdoll_physics.h"
 #include "../../3rdparty/bullet/src/btBulletDynamicsCommon.h"
+#include "../../3rdparty/bullet/src/BulletCollision/CollisionDispatch/btManifoldResult.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <memory>
 #include <vector>
+#include <unordered_map>
 
 namespace {
 const float Scale = 0.0254f; // GoldSrc inch -> metre; Z stays up.
-enum { WorldGroup = 1, CorpseGroup = 2 };
+enum { WorldGroup = 1, CorpseGroup = 2, ActorGroup = 4 };
+int grenadeContactTag;
+bool GrenadeContact(btManifoldPoint &point,const btCollisionObjectWrapper *a,int,int,
+    const btCollisionObjectWrapper *b,int,int) {
+    if(a->getCollisionObject()->getUserPointer()==&grenadeContactTag || b->getCollisionObject()->getUserPointer()==&grenadeContactTag)
+        point.m_combinedRestitution=0.4f;
+    return true;
+}
 btVector3 Vec(const float *p) { return btVector3(p[0], p[1], p[2]) * Scale; }
 btTransform Transform(const rd_matrix m) {
     btMatrix3x3 basis(m[0][0], m[0][1], m[0][2], m[1][0], m[1][1], m[1][2], m[2][0], m[2][1], m[2][2]);
@@ -30,18 +39,29 @@ void Matrix(const btTransform &t, rd_matrix m, float scale = 1) {
 struct Part {
     int bone, group;
     float radius, waterSurface = 0, waterQueryTime = -1;
-    bool water = false;
+    float linearDamping=0.12f,angularDamping=0.35f;
+    bool water = false, fittedBoot = false;
+    btTransform stepStart;
     btTransform offset; // bone -> centre of collider
     std::unique_ptr<btCollisionShape> shape;
     std::unique_ptr<btRigidBody> body;
 };
 struct Doll {
     int entity, count;
+    int selfPairs = 0;
     float token, scale;
     double age = 0, stable = 0, sampleTime = 0;
+    double activeTime = 0; // Continuous solver time; hits cannot postpone the safety limit.
     btVector3 previousPosition[RD_MAX_BODIES];
     btQuaternion previousRotation[RD_MAX_BODIES];
-    bool frozen = false, poseDirty = true, boundsDirty = true;
+    bool frozen = false, poseDirty = true, boundsDirty = true, prop = false;
+    bool held=false;
+    bool actorContacts=false;
+    bool grenade=false;
+    btVector3 holdTarget;
+    btQuaternion holdRotation=btQuaternion::getIdentity();
+    std::vector<btTransform> holdLocal;
+    double holdDeadline=0;
     rd_matrix cachedPose[RD_MAX_BONES];
     float mins[3], maxs[3];
     int parent[RD_MAX_BONES], part[RD_MAX_BONES];
@@ -64,15 +84,28 @@ struct Physics {
     btSequentialImpulseConstraintSolver solver;
     btDiscreteDynamicsWorld world;
     std::vector<std::unique_ptr<Doll>> dolls;
+    std::unordered_map<int,Doll *> byEntity;
     std::vector<std::unique_ptr<Mesh>> meshes;
     std::unique_ptr<Mesh> pending;
+    struct Actor {
+        std::unique_ptr<btBoxShape> shape;
+        std::unique_ptr<btDefaultMotionState> motion;
+        std::unique_ptr<btRigidBody> body;
+        btVector3 half;
+        btVector3 sampledOrigin,velocity=btVector3(0,0,0);
+    };
+    std::unordered_map<int,std::unique_ptr<Actor>> actors;
     double lastTime = -1, accumulator = 0;
     Physics() : dispatcher(&config), world(&dispatcher, &broadphase, &solver, &config) {
         world.setGravity(btVector3(0, 0, -800 * Scale));
+        gContactAddedCallback=GrenadeContact;
         world.getSolverInfo().m_numIterations = 80;
         world.getSolverInfo().m_splitImpulse = true;
+        // Correct shallow penetrations without injecting bounce into resting bodies.
+        world.getSolverInfo().m_splitImpulsePenetrationThreshold = -0.002f;
     }
     void removeDoll(size_t i) {
+        byEntity.erase(dolls[i]->entity);
         if (dolls[i]->frozen) world.removeRigidBody(dolls[i]->frozenBody.get());
         else {
             for (auto &j : dolls[i]->joints) world.removeConstraint(j.get());
@@ -85,12 +118,13 @@ struct Physics {
         meshes.erase(meshes.begin() + i);
     }
     ~Physics() {
+        for(auto &actor:actors)world.removeRigidBody(actor.second->body.get());
         while (!dolls.empty()) removeDoll(dolls.size() - 1);
         while (!meshes.empty()) removeMesh(meshes.size() - 1);
     }
     Doll *find(int entity) {
-        for (auto &d : dolls) if (d->entity == entity) return d.get();
-        return nullptr;
+        auto entry=byEntity.find(entity);
+        return entry==byEntity.end()?nullptr:entry->second;
     }
 };
 std::unique_ptr<Physics> physics;
@@ -107,6 +141,42 @@ float LengthScale(const rd_matrix m) {
 }
 }
 
+extern "C" void RD_RemoveActor(int entity) {
+    if(!physics)return;
+    auto entry=physics->actors.find(entity);if(entry==physics->actors.end())return;
+    physics->world.removeRigidBody(entry->second->body.get());physics->actors.erase(entry);
+}
+static void Wake(Doll &d);
+extern "C" void RD_ActorBounds(int entity,const float *mins,const float *maxs) {
+    if(!mins || !maxs)return;
+    for(int i=0;i<3;++i)if(!std::isfinite(mins[i]) || !std::isfinite(maxs[i]) || maxs[i]<=mins[i])return;
+    auto &p=Get();btVector3 lo=Vec(mins),hi=Vec(maxs),half=(hi-lo)*0.5f;
+    btTransform transform;transform.setIdentity();transform.setOrigin((hi+lo)*0.5f);
+    auto entry=p.actors.find(entity);
+    const bool moved=entry==p.actors.end() || (entry->second->body->getWorldTransform().getOrigin()-transform.getOrigin()).length2()>0.000001f;
+    if(entry!=p.actors.end() && (entry->second->half-half).length2()>0.000001f) {RD_RemoveActor(entity);entry=p.actors.end();}
+    if(entry==p.actors.end()) {
+        std::unique_ptr<Physics::Actor> actor(new Physics::Actor);actor->half=half;
+        actor->sampledOrigin=transform.getOrigin();
+        actor->shape.reset(new btBoxShape(half));actor->shape->setMargin(0.005f);
+        actor->motion.reset(new btDefaultMotionState(transform));
+        btRigidBody::btRigidBodyConstructionInfo info(0,actor->motion.get(),actor->shape.get());
+        actor->body.reset(new btRigidBody(info));actor->body->setWorldTransform(transform);
+        actor->body->setCollisionFlags(btCollisionObject::CF_KINEMATIC_OBJECT);
+        actor->body->setActivationState(DISABLE_DEACTIVATION);
+        actor->body->setRestitution(0.8f);actor->body->setFriction(0.6f);
+        p.world.addRigidBody(actor->body.get(),ActorGroup,CorpseGroup);
+        p.actors.emplace(entity,std::move(actor));
+    } else {
+        entry->second->motion->setWorldTransform(transform);
+        entry->second->body->setWorldTransform(transform);
+        p.world.updateSingleAabb(entry->second->body.get());
+    }
+    if(moved)for(auto &d:p.dolls)if(d->frozen && (d->prop || d->actorContacts)) {
+        btVector3 a,b;d->frozenShape->getAabb(d->frozenBody->getWorldTransform(),a,b);
+        if(a.x()<hi.x() && b.x()>lo.x() && a.y()<hi.y() && b.y()>lo.y() && a.z()<hi.z() && b.z()>lo.z())Wake(*d);
+    }
+}
 extern "C" void RD_Reset(void) { physics.reset(); waterQuery = nullptr; }
 extern "C" void RD_SetWaterQuery(rd_water_query query) { waterQuery = query; }
 extern "C" void RD_BeginMesh(int key) {
@@ -175,8 +245,23 @@ extern "C" int RD_Has(int entity, float token) {
     Doll *d = physics->find(entity);
     return d && std::fabs(d->token - token) < 0.0005f;
 }
-extern "C" int RD_Create(int entity, float token, int count, const rd_bone *bones,
-    int hitboxCount, const rd_hitbox *hitboxes, const rd_matrix *pose, const float *velocity, int hitgroup) {
+extern "C" void RD_FitFootHitboxes(int boneCount,const rd_bone *bones,int vertexCount,
+    const float (*vertices)[3],const unsigned char *vertexBones,int boxCount,rd_hitbox *boxes) {
+    if(!bones || !vertices || !vertexBones || !boxes || boneCount<1 || boneCount>RD_MAX_BONES || vertexCount<0 || boxCount<0) return;
+    for(int b=0;b<boxCount;++b) {
+        auto &box=boxes[b];
+        if(box.bone<0 || box.bone>=boneCount || (box.group!=6 && box.group!=7) || !HasName(bones[box.bone].name,"foot")) continue;
+        // Studio reference vertices are already in their weighted bone's local
+        // space. Keep authored coverage, extending it to enclose the actual boot.
+        for(int v=0;v<vertexCount;++v) if(vertexBones[v]==box.bone)
+            for(int a=0;a<3;++a) if(std::isfinite(vertices[v][a])) {
+                box.mins[a]=std::min(box.mins[a],vertices[v][a]);
+                box.maxs[a]=std::max(box.maxs[a],vertices[v][a]);
+            }
+    }
+}
+static int CreateDoll(int entity, float token, int count, const rd_bone *bones,
+    int hitboxCount, const rd_hitbox *hitboxes, const rd_matrix *pose, const float *velocity, int hitgroup, bool isProp,bool isGrenade=false) {
     if (count < 1 || count > RD_MAX_BONES || hitboxCount < 1 || hitboxCount > 256 || !std::isfinite(token)) return 0;
     // Reject cycles, invalid transforms and malformed MDLs before allocating bodies.
     for (int i = 0; i < count; ++i) {
@@ -192,9 +277,10 @@ extern "C" int RD_Create(int entity, float token, int count, const rd_bone *bone
     auto &p = Get();
     if (RD_Has(entity, token)) return 1;
     RD_Remove(entity);
-    if (p.dolls.size() >= RD_MAX_CORPSES) return 0;
+    int used=0;for(const auto &existing:p.dolls) if(existing->prop==isProp && (!isProp || existing->grenade==isGrenade)) ++used;
+    if(used >= (isProp?(isGrenade?RD_MAX_GRENADES:RD_MAX_PROPS):RD_MAX_CORPSES)) return 0;
     std::unique_ptr<Doll> d(new Doll);
-    d->entity = entity; d->token = token; d->count = count;
+    d->entity = entity; d->token = token; d->count = count;d->prop=isProp;d->grenade=isGrenade;
     d->scale = std::max(0.1f, std::min(8.0f, LengthScale(pose[0])));
     btVector3 lo[RD_MAX_BONES], hi[RD_MAX_BONES];
     int group[RD_MAX_BONES] = {};
@@ -216,6 +302,12 @@ extern "C" int RD_Create(int entity, float token, int count, const rd_bone *bone
         else { lo[h.bone].setMin(a); hi[h.bone].setMax(b); }
         have[h.bone] = true;
     }
+    bool oversized=false;
+    for(int i=0;i<count;++i) if(have[i]) {
+        const btVector3 half=(hi[i]-lo[i])*0.5f;
+        const int axis=half.maxAxis();
+        if(std::min(half[(axis+1)%3],half[(axis+2)%3])*0.85f>0.35f) oversized=true;
+    }
     for (int i = 0; i < count; ++i) if (have[i]) {
         if (d->parts.size() == RD_MAX_BODIES) return 0;
         Part part;
@@ -230,9 +322,16 @@ extern "C" int RD_Create(int entity, float token, int count, const rd_bone *bone
         float height = std::max(0.0f, 2.0f * (half[axis] - radius));
         // Broad trunks need a contact patch rather than a single rounded
         // capsule contact (notably the enlarged megasquid torso and tail).
-        if (radius > 0.35f) {
-            part.shape.reset(new btBoxShape(half * 0.85f));
-            part.shape->setMargin(0.01f);
+        const bool contactPatch=!oversized && (HasName(bones[i].name,"bip01") || HasName(bones[i].name,"bip02")) &&
+            (HasName(bones[i].name,"spine") || HasName(bones[i].name,"pelvis") || HasName(bones[i].name,"foot"));
+        const bool footPatch=contactPatch && HasName(bones[i].name,"foot");
+        const bool fittedBoot=footPatch && (part.group==6 || part.group==7);
+        part.fittedBoot=fittedBoot;
+        if (radius > 0.35f || contactPatch) {
+            // Full mesh-fitted foot coverage, including diagonal sole/toe
+            // contacts. Torso hitboxes still shrink to accommodate overlap.
+            part.shape.reset(new btBoxShape(fittedBoot?half+btVector3(0.002f,0.002f,0.002f):half*(footPatch?0.95f:0.85f)));
+            part.shape->setMargin(fittedBoot?0.003f:0.01f);
         } else if (axis == 0) part.shape.reset(new btCapsuleShapeX(radius, height));
         else if (axis == 2) part.shape.reset(new btCapsuleShapeZ(radius, height));
         else part.shape.reset(new btCapsuleShape(radius, height));
@@ -241,6 +340,10 @@ extern "C" int RD_Create(int entity, float token, int count, const rd_bone *bone
         btVector3 inertia;
         part.shape->calculateLocalInertia(mass, inertia);
         btRigidBody::btRigidBodyConstructionInfo info(mass, nullptr, part.shape.get(), inertia);
+        info.m_additionalDamping=!oversized;
+        info.m_additionalDampingFactor=0.25f;
+        info.m_additionalLinearDampingThresholdSqr=0.0025f;
+        info.m_additionalAngularDampingThresholdSqr=0.01f;
         part.body.reset(new btRigidBody(info));
         part.body->setUserIndex(entity);
         part.body->setUserIndex2(group[i]);
@@ -248,10 +351,12 @@ extern "C" int RD_Create(int entity, float token, int count, const rd_bone *bone
         part.body->setWorldTransform(t);
         part.body->setInterpolationWorldTransform(t);
         part.body->setDamping(0.12f, 0.35f);
-        part.body->setFriction(0.8f); part.body->setRestitution(0.05f);
+        part.body->setFriction(oversized?0.8f:0.85f); part.body->setRestitution(oversized?0.05f:0.0f);
+        part.body->setRollingFriction(oversized?0.0f:0.025f);
+        part.body->setSpinningFriction(oversized?0.0f:0.025f);
         part.body->setSleepingThresholds(0.12f, 0.18f);
-        part.body->setCcdMotionThreshold(radius * 0.5f);
-        part.body->setCcdSweptSphereRadius(radius * 0.8f);
+        part.body->setCcdMotionThreshold(footPatch?0.005f:radius * 0.5f);
+        part.body->setCcdSweptSphereRadius(footPatch?std::min(half.x(),std::min(half.y(),half.z()))*0.85f:radius * 0.8f);
         btVector3 v = Vec(velocity);
         if (v.length() > 15) v *= 15 / v.length();
         part.body->setLinearVelocity(v);
@@ -280,65 +385,290 @@ extern "C" int RD_Create(int entity, float token, int count, const rd_bone *bone
         float swing = 0.8f, twist = 0.35f;
         if (HasName(bones[child.bone].name, "spine") || HasName(bones[child.bone].name, "neck")) { swing = 0.25f; twist = 0.2f; }
         else if (HasName(bones[child.bone].name, "head")) { swing = 0.45f; twist = 0.4f; }
-        else if (HasName(bones[child.bone].name, "forearm") || HasName(bones[child.bone].name, "calf")) { swing = 1.1f; twist = 0.12f; }
-        else if (HasName(bones[child.bone].name, "upperarm") || HasName(bones[child.bone].name, "thigh")) { swing = 1.2f; twist = 0.6f; }
+        else if (HasName(bones[child.bone].name, "forearm") || HasName(bones[child.bone].name, "calf") ||
+            HasName(bones[child.bone].name,"arm2") || HasName(bones[child.bone].name,"leg1")) { swing = 1.1f; twist = 0.12f; }
+        else if (HasName(bones[child.bone].name, "upperarm") || HasName(bones[child.bone].name, "thigh") ||
+            HasName(bones[child.bone].name,"arm1")) { swing = 1.2f; twist = 0.6f; }
+        else if(HasName(bones[child.bone].name,"foot")) { swing=0.35f;twist=0.15f; }
+        else if(HasName(bones[child.bone].name,"hand")) { swing=0.4f;twist=0.25f; }
         // Oversized creature trunks/tails cannot fold onto terrain under
         // human spine limits. Give these assemblies a free ball joint.
         if (child.radius > 0.35f || parent.radius > 0.35f) { swing = 3.0f; twist = 3.0f; }
         cone->setLimit(swing, swing, twist, 0.9f, 0.3f, 1.0f);
-        cone->setDamping(0.15f);
-        // Preserve attachment points on small, closely spaced legacy spine bones.
-        cone->setParam(BT_CONSTRAINT_ERP, 0.8f);
+        cone->setDamping(oversized?0.15f:0.3f);
+        // Bullet's default axis here selects angular limit correction, not
+        // attachment correction. The old 0.8 was injecting angular energy.
+        cone->setParam(BT_CONSTRAINT_ERP, oversized ? 0.8f : 0.1f);
+        if(!oversized) for(int axis=0;axis<3;++axis) cone->setParam(BT_CONSTRAINT_ERP,0.35f,axis);
         d->joints.push_back(std::move(cone));
     }
-    // Self collision is off: legacy hitboxes overlap significantly. Other
-    // corpses and world brushes still collide.
-    for (auto &part : d->parts) p.world.addRigidBody(part.body.get(), CorpseGroup, WorldGroup | CorpseGroup);
+    // Exclude neighbouring joints and overlapping captured legacy colliders.
+    // Separated limbs still collide with the torso and each other.
+    // Oversized legacy creature hitboxes are not anatomical limbs; retain their
+    // previous collision policy until they have purpose-built physics proxies.
+    for (auto &part : d->parts) p.world.addRigidBody(part.body.get(), CorpseGroup, WorldGroup | CorpseGroup | (isProp?ActorGroup:0));
     for (size_t i = 0; i < d->parts.size(); ++i)
-        for (size_t j = i+1; j < d->parts.size(); ++j)
-            d->parts[i].body->setIgnoreCollisionCheck(d->parts[j].body.get(), true);
+        for (size_t j = i+1; j < d->parts.size(); ++j) {
+            int a=d->parts[i].bone,b=d->parts[j].bone;
+            int distance=999;
+            for(int x=a,dx=0;x>=0;x=bones[x].parent,++dx)
+                for(int y=b,dy=0;y>=0;y=bones[y].parent,++dy)
+                    if(x==y) distance=std::min(distance,dx+dy);
+            struct Overlap : btCollisionWorld::ContactResultCallback {
+                bool penetrating=false;
+                btScalar addSingleResult(btManifoldPoint &point,const btCollisionObjectWrapper *,int,int,
+                    const btCollisionObjectWrapper *,int,int) override {
+                    if(point.getDistance() < -0.003f) penetrating=true;
+                    return 0;
+                }
+            } overlap;
+            p.world.contactPairTest(d->parts[i].body.get(),d->parts[j].body.get(),overlap);
+            const int groupA=d->parts[i].group,groupB=d->parts[j].group;
+            const bool torsoA=groupA==2 || groupA==3,torsoB=groupB==2 || groupB==3;
+            // Legacy spine segments and each limb's internal hitboxes form
+            // one anatomical region. Their constraints cannot resolve contacts
+            // inside that region; cross-region limb/torso contacts remain active.
+            const bool sameRegion=(groupA>0 && groupA==groupB) || (torsoA && torsoB) ||
+                (groupA==1 && groupB==2) || (groupB==1 && groupA==2);
+            if(oversized || sameRegion || distance<=2 || overlap.penetrating)
+                d->parts[i].body->setIgnoreCollisionCheck(d->parts[j].body.get(), true);
+            else ++d->selfPairs;
+        }
     for (auto &j : d->joints) p.world.addConstraint(j.get(), true);
+    p.byEntity[d->entity]=d.get();
     p.dolls.push_back(std::move(d));
     return 1;
+}
+extern "C" int RD_SelfCollisionPairs(int entity) {
+    Doll *d=physics?physics->find(entity):nullptr;return d?d->selfPairs:0;
+}
+extern "C" float RD_SelfPenetration(int entity) {
+    Doll *d=physics?physics->find(entity):nullptr;if(!d) return 0;
+    struct Depth : btCollisionWorld::ContactResultCallback {
+        float deepest=0;
+        btScalar addSingleResult(btManifoldPoint &point,const btCollisionObjectWrapper *,int,int,
+            const btCollisionObjectWrapper *,int,int) override {
+            deepest=std::max(deepest,float(-point.getDistance()/Scale));return 0;
+        }
+    } depth;
+    for(size_t i=0;i<d->parts.size();++i) for(size_t j=i+1;j<d->parts.size();++j) {
+        auto *a=d->parts[i].body.get(),*b=d->parts[j].body.get();
+        if(a->checkCollideWith(b) && b->checkCollideWith(a)) physics->world.contactPairTest(a,b,depth);
+    }
+    return depth.deepest;
+}
+extern "C" int RD_Create(int entity,float token,int count,const rd_bone *bones,
+    int hitboxCount,const rd_hitbox *hitboxes,const rd_matrix *pose,const float *velocity,int hitgroup) {
+    return CreateDoll(entity,token,count,bones,hitboxCount,hitboxes,pose,velocity,hitgroup,false);
+}
+static int CreateProp(int entity,float token,int count,const rd_bone *bones,
+    const rd_matrix *pose,int pointCount,const float (*points)[3],
+    const float *velocity,const float *angularDegrees,bool grenade) {
+    if(!points || pointCount<4 || pointCount>8192 || !angularDegrees) return 0;
+    rd_hitbox box={};box.bone=0;box.group=0;
+    for(int a=0;a<3;++a) {
+        if(!std::isfinite(angularDegrees[a])) return 0;
+        box.mins[a]=box.maxs[a]=points[0][a];
+    }
+    for(int i=0;i<pointCount;++i) for(int a=0;a<3;++a) {
+        if(!std::isfinite(points[i][a])) return 0;
+        box.mins[a]=std::min(box.mins[a],points[i][a]);
+        box.maxs[a]=std::max(box.maxs[a],points[i][a]);
+    }
+    if(RD_Has(entity,token)) return 1;
+    if(!CreateDoll(entity,token,count,bones,1,&box,pose,velocity,0,true,grenade)) return 0;
+    auto &p=*physics;auto &part=p.find(entity)->parts[0];
+    p.world.removeRigidBody(part.body.get());
+    std::unique_ptr<btConvexHullShape> hull(new btConvexHullShape);
+    const btVector3 centre=part.offset.getOrigin();
+    for(int i=0;i<pointCount;++i) hull->addPoint(Vec(points[i])-centre,false);
+    hull->recalcLocalAabb();hull->optimizeConvexHull();hull->setMargin(0.005f);
+    part.body->setCollisionShape(hull.get());part.shape=std::move(hull);
+    const float mass=4.0f;btVector3 inertia;part.shape->calculateLocalInertia(mass,inertia);
+    part.body->setMassProps(mass,inertia);part.body->updateInertiaTensor();
+    part.body->setAngularVelocity(btVector3(angularDegrees[0],angularDegrees[1],angularDegrees[2])*(SIMD_PI/180));
+    part.body->setDamping(0.04f,0.12f);
+    part.linearDamping=0.04f;part.angularDamping=0.12f;
+    part.body->setSleepingThresholds(0.05f,0.08f);
+    // Living enemy hulls also collide with props; players remain nonblocking.
+    part.body->setRestitution(0.3f);
+    p.world.addRigidBody(part.body.get(),CorpseGroup,WorldGroup|CorpseGroup|ActorGroup);
+    return 1;
+}
+extern "C" int RD_CreateProp(int entity,float token,int count,const rd_bone *bones,
+    const rd_matrix *pose,int pointCount,const float (*points)[3],const float *velocity,const float *angularDegrees) {
+    return CreateProp(entity,token,count,bones,pose,pointCount,points,velocity,angularDegrees,false);
+}
+extern "C" int RD_CreateGrenade(int entity,float token,int count,const rd_bone *bones,
+    const rd_matrix *pose,int pointCount,const float (*points)[3],const float *velocity,const float *angularDegrees) {
+    return CreateProp(entity,token,count,bones,pose,pointCount,points,velocity,angularDegrees,true) && RD_Grenade(entity,token);
+}
+extern "C" int RD_Grenade(int entity,float token) {
+    Doll *d=physics?physics->find(entity):nullptr;
+    if(!d || !d->prop || !RD_Has(entity,token))return 0;
+    d->grenade=true;auto &part=d->parts[0];auto &body=*part.body;
+    btVector3 inertia;part.shape->calculateLocalInertia(0.4f,inertia);
+    body.setMassProps(0.4f,inertia);body.updateInertiaTensor();
+    body.setUserPointer(&grenadeContactTag);body.setCollisionFlags(body.getCollisionFlags()|btCollisionObject::CF_CUSTOM_MATERIAL_CALLBACK);
+    body.setFlags(body.getFlags()|BT_DISABLE_WORLD_GRAVITY);
+    body.setFriction(0.55f);body.setRollingFriction(0.03f);body.setSpinningFriction(0.03f);
+    body.setCcdMotionThreshold(0.01f);body.setCcdSweptSphereRadius(std::min(0.025f,part.radius*0.8f));
+    return 1;
+}
+extern "C" void RD_Blast(const float *origin,float radius,float strength) {
+    if(!physics || !origin || !std::isfinite(radius) || radius<=0 || !std::isfinite(strength) || strength<=0)return;
+    for(int a=0;a<3;++a)if(!std::isfinite(origin[a]))return;
+    auto &p=*physics;const btVector3 source=Vec(origin);const btScalar reach=radius*Scale;
+    strength=std::min(1800.0f,strength);
+    for(auto &d:p.dolls) {
+        if(d->held)continue;
+        float lo[3],hi[3];if(!RD_Bounds(d->entity,lo,hi))continue;
+        btVector3 centre=(Vec(lo)+Vec(hi))*0.5f;
+        if((centre-source).length()>reach)continue;
+        btCollisionWorld::ClosestRayResultCallback sight(source,centre);
+        sight.m_collisionFilterGroup=CorpseGroup;sight.m_collisionFilterMask=WorldGroup;
+        p.world.rayTest(source,centre,sight);if(sight.hasHit() && sight.m_closestHitFraction<0.99f)continue;
+        if(waterQuery) {float surface;float target[3]={float(centre.x()/Scale),float(centre.y()/Scale),float(centre.z()/Scale)};
+            if(bool(waterQuery(origin,&surface))!=bool(waterQuery(target,&surface)))continue;
+        }
+        Wake(*d);d->age=d->stable=0;
+        for(auto &part:d->parts) {
+            auto &body=*part.body;btVector3 outward=body.getWorldTransform().getOrigin()-source;
+            const btScalar distance=outward.length();if(distance>=reach)continue;
+            outward=distance>0.001f?outward/distance:btVector3(0,0,1);
+            outward.setZ(std::max(btScalar(0.65f),outward.z()));outward.normalize();
+            const btVector3 kick=outward*(strength*Scale*std::sqrt(1-distance/reach));
+            body.applyCentralImpulse(kick/body.getInvMass());body.activate(true);
+        }
+    }
 }
 extern "C" void RD_Step(double time, float gravity) {
     if (!physics || !std::isfinite(time)) return;
     auto &p = *physics;
-    if (p.lastTime < 0 || time < p.lastTime) { p.lastTime = time; p.accumulator = 0; return; }
-    double dt = std::min(0.1, time - p.lastTime);
+    if (p.lastTime < 0 || time < p.lastTime) {
+        p.lastTime = time; p.accumulator = 0;
+        for(auto &entry:p.actors)entry.second->sampledOrigin=entry.second->body->getWorldTransform().getOrigin();
+        return;
+    }
+    const double frameDt=time-p.lastTime;
+    double dt = std::min(0.1, frameDt);
     p.lastTime = time;
     if (dt <= 0) return;
+    for(auto &entry:p.actors) {
+        auto &actor=*entry.second;
+        const btVector3 origin=actor.body->getWorldTransform().getOrigin(),travel=origin-actor.sampledOrigin;
+        // Network/render movement spans a frame, not a single 120 Hz tick.
+        // Teleports must not impart a fictitious collision velocity.
+        actor.velocity=travel.length2()>std::pow(64*Scale,2)?btVector3(0,0,0):travel/btScalar(frameDt);
+        const btScalar maxSpeed=400*Scale;
+        if(actor.velocity.length2()>maxSpeed*maxSpeed)actor.velocity*=maxSpeed/actor.velocity.length();
+        actor.sampledOrigin=origin;
+    }
     if (!std::isfinite(gravity)) gravity = 800;
     p.world.setGravity(btVector3(0, 0, -std::max(0.0f, gravity) * Scale));
-    if (!RD_ActiveBodies()) {
+    const int activeBodies=RD_ActiveBodies();
+    if (!activeBodies) {
         p.accumulator = 0;
         for (auto &m : p.meshes) m->body->setInterpolationWorldTransform(m->body->getWorldTransform());
         return;
     }
     p.accumulator += dt;
+    // Preserve the accepted small-scene solver. Bound the repeated constraint
+    // work in crowded scenes while retaining full-rate contacts and boot CCD.
+    p.world.getSolverInfo().m_numIterations=activeBodies>240?32:activeBodies>96?48:80;
     const double step = 1.0 / 120.0;
     while (p.accumulator + 1e-9 >= step) {
-        for (auto &d : p.dolls) if (!d->frozen) Buoyancy(*d, gravity, (float)step);
+        for(auto &entry:p.actors) {
+            auto &actor=*entry.second;
+            btTransform previous=actor.body->getWorldTransform();
+            previous.getOrigin()-=actor.velocity*btScalar(step);
+            // Bullet derives kinematic velocity from this transform each tick.
+            actor.body->setInterpolationWorldTransform(previous);
+        }
+        for (auto &d : p.dolls) if (!d->frozen) {
+            if(d->grenade)d->parts[0].body->setGravity(p.world.getGravity()*0.5f);
+            Buoyancy(*d, gravity, (float)step);
+            if(d->held) {
+                if(time>d->holdDeadline) d->held=false;
+                else {
+                    btVector3 centre(0,0,0);
+                    for(auto &part:d->parts)centre+=part.body->getWorldTransform().getOrigin();
+                    centre/=btScalar(d->parts.size());
+                    const btVector3 delta=d->holdTarget-centre;
+                    if(delta.length2()>std::pow(256*Scale,2)) d->held=false;
+                    else {
+                        // Reach the camera target in one physics tick when clear.
+                        // Contacts and CCD resolve walls before the body can move.
+                        for(size_t i=0;i<d->parts.size();++i) {
+                            auto &body=*d->parts[i].body;
+                            const btVector3 target=d->holdTarget+quatRotate(d->holdRotation,d->holdLocal[i].getOrigin());
+                            btVector3 velocity=(target-body.getWorldTransform().getOrigin())/btScalar(step);
+                            if(velocity.length()>80)velocity*=80/velocity.length();
+                            body.setLinearVelocity(velocity);
+                            btQuaternion rotation=d->holdRotation*d->holdLocal[i].getRotation()*body.getWorldTransform().getRotation().inverse();
+                            rotation.normalize();if(rotation.w()<0)rotation=-rotation;
+                            btVector3 spin=rotation.getAngle()<0.0001f?btVector3(0,0,0):rotation.getAxis()*rotation.getAngle()/btScalar(step);
+                            if(spin.length()>40)spin*=40/spin.length();
+                            body.setAngularVelocity(spin);body.activate(true);
+                        }
+                        d->age=d->stable=d->activeTime=0;
+                    }
+                }
+                if(!d->held && d->prop)d->parts[0].body->setCcdMotionThreshold(d->grenade?0.01f:0);
+            }
+            for(auto &part:d->parts) if(part.fittedBoot) part.stepStart=part.body->getWorldTransform();
+        }
         p.world.stepSimulation((btScalar)step, 0);
         for (auto &d : p.dolls) if (!d->frozen) {
+            if(!d->held && (d->prop || d->actorContacts))for(auto &part:d->parts) {
+                // Bound exceptional contact impulses without slowing normal throws.
+                btVector3 velocity=part.body->getLinearVelocity(),spin=part.body->getAngularVelocity();
+                const btScalar maxSpeed=1200*Scale;
+                if(velocity.length2()>maxSpeed*maxSpeed)part.body->setLinearVelocity(velocity*(maxSpeed/velocity.length()));
+                if(spin.length2()>30*30)part.body->setAngularVelocity(spin*(30/spin.length()));
+            }
+            // Bullet's built-in CCD sweeps an inscribed sphere and misses the
+            // toe/sole of a rotating boot. Sweep the full box against brushes.
+            for(auto &part:d->parts) if(part.fittedBoot) {
+                auto &body=*part.body;const btTransform end=body.getWorldTransform();
+                if((end.getOrigin()-part.stepStart.getOrigin()).length2()<1e-8f &&
+                    std::fabs(end.getRotation().dot(part.stepStart.getRotation()))>0.999999f) continue;
+                btCollisionWorld::ClosestConvexResultCallback hit(part.stepStart.getOrigin(),end.getOrigin());
+                hit.m_collisionFilterGroup=CorpseGroup;hit.m_collisionFilterMask=WorldGroup;
+                p.world.convexSweepTest(static_cast<btConvexShape *>(part.shape.get()),part.stepStart,end,hit);
+                if(hit.hasHit() && hit.m_closestHitFraction<1 && hit.m_hitNormalWorld.z()>0.5f) {
+                    // Correct only motion through the brush plane. Keeping
+                    // tangential motion/rotation avoids pinning the ankle while
+                    // the joint solver is trying to move the rest of the leg.
+                    const auto *shape=static_cast<btConvexShape *>(part.shape.get());
+                    const btVector3 support=end*shape->localGetSupportingVertex(end.getBasis().transpose()*-hit.m_hitNormalWorld);
+                    const btScalar depth=(hit.m_hitPointWorld-support).dot(hit.m_hitNormalWorld);
+                    if(depth<=0) continue;
+                    btTransform safe=end;safe.getOrigin()+=hit.m_hitNormalWorld*(depth+0.0001f);
+                    body.setWorldTransform(safe);body.setInterpolationWorldTransform(safe);
+                    btVector3 velocity=body.getLinearVelocity();const btScalar inward=velocity.dot(hit.m_hitNormalWorld);
+                    if(inward<0) body.setLinearVelocity(velocity-hit.m_hitNormalWorld*inward);
+                    p.world.updateSingleAabb(&body);
+                }
+            }
             d->age += step; d->poseDirty = d->boundsDirty = true;
+            d->activeTime += step;
+            if(d->activeTime>=60.0) { Freeze(*d);continue; }
             d->sampleTime += step;
             if (d->sampleTime >= 0.25) {
-                bool quiet = true, almostQuiet = true;
-                const bool rootQuiet = (d->parts[0].body->getWorldTransform().getOrigin()-d->previousPosition[0]).length2()<0.0016f;
+                bool quiet = true;
                 for (size_t i=0; i<d->parts.size(); ++i) {
                     const auto &t = d->parts[i].body->getWorldTransform();
                     const float travel = (t.getOrigin()-d->previousPosition[i]).length2();
                     const float rotation = std::fabs(t.getRotation().dot(d->previousRotation[i]));
-                    if (travel > 0.0004f || rotation < 0.9987f) quiet = false;
-                    if (travel > 0.0036f) almostQuiet = false;
+                    if (travel > 0.000025f || rotation < 0.99996f) quiet = false;
                     d->previousPosition[i]=t.getOrigin(); d->previousRotation[i]=t.getRotation();
                 }
                 // Constraint correction can leave nonzero velocities on a
                 // visibly settled legacy rig. Measure actual pose motion.
-                d->stable = quiet || (d->age>8 && almostQuiet) || (d->age>12 && rootQuiet) ? d->stable+d->sampleTime : 0;
+                d->stable = quiet ? d->stable+d->sampleTime : 0;
                 d->sampleTime=0;
-                if(d->age>2 && d->stable>0.75) Freeze(*d);
+                if(d->age>2 && d->stable>1.0) Freeze(*d);
             }
         }
         p.accumulator -= step;
@@ -386,6 +716,10 @@ extern "C" int RD_Bounds(int entity, float *mins, float *maxs) {
     return 1;
 }
 extern "C" int RD_Count(void) { return physics ? (int)physics->dolls.size() : 0; }
+extern "C" int RD_CorpseCount(void) {
+    int count=0;if(physics) for(const auto &d:physics->dolls) if(!d->prop) ++count;
+    return count;
+}
 extern "C" int RD_BodyCount(int entity) { Doll *d = physics ? physics->find(entity) : nullptr; return d ? (int)d->parts.size() : 0; }
 extern "C" float RD_JointError(int entity) {
     Doll *d = physics ? physics->find(entity) : nullptr;
@@ -416,7 +750,7 @@ static void Freeze(Doll &d) {
     d.frozenBody.reset(new btRigidBody(info)); d.frozenBody->setWorldTransform(root);
     d.frozenBody->setUserIndex(d.entity); d.frozenBody->setUserIndex2(-1);
     d.frozenBody->setFriction(0.8f);
-    physics->world.addRigidBody(d.frozenBody.get(),CorpseGroup,CorpseGroup);
+    physics->world.addRigidBody(d.frozenBody.get(),CorpseGroup,CorpseGroup | ((d.prop || d.actorContacts)?ActorGroup:0));
     d.frozen = true;
 }
 static void Wake(Doll &d) {
@@ -424,15 +758,72 @@ static void Wake(Doll &d) {
     physics->world.removeRigidBody(d.frozenBody.get());
     d.frozenBody.reset(); d.frozenShape.reset();
     for (auto &p : d.parts) {
-        physics->world.addRigidBody(p.body.get(),CorpseGroup,WorldGroup|CorpseGroup);
+        physics->world.addRigidBody(p.body.get(),CorpseGroup,WorldGroup|CorpseGroup | ((d.prop || d.actorContacts)?ActorGroup:0));
         p.body->activate(true); p.waterQueryTime = -1;
     }
     for (auto &j : d.joints) physics->world.addConstraint(j.get(),true);
     d.frozen = false; d.age = d.stable = d.sampleTime = 0;
+    d.activeTime=0;
     for(size_t i=0;i<d.parts.size();++i) {
         d.previousPosition[i]=d.parts[i].body->getWorldTransform().getOrigin();
         d.previousRotation[i]=d.parts[i].body->getWorldTransform().getRotation();
     }
+}
+extern "C" void RD_FreezeAll(double time) {
+    if(!physics) return;
+    for(auto &d:physics->dolls) {
+        d->held=false;
+        if(d->prop)d->parts[0].body->setCcdMotionThreshold(0);
+        Freeze(*d);
+    }
+    physics->lastTime=time;physics->accumulator=0;
+}
+extern "C" int RD_HoldProp(int entity,float token,const float *target) {
+    Doll *d=physics?physics->find(entity):nullptr;
+    if(!d || d->parts.empty() || d->token!=token || !target)return 0;
+    for(int i=0;i<3;++i)if(!std::isfinite(target[i]))return 0;
+    Wake(*d);
+    if(!d->actorContacts && !d->prop) {
+        d->actorContacts=true;
+        for(auto &part:d->parts) {
+            physics->world.removeRigidBody(part.body.get());
+            physics->world.addRigidBody(part.body.get(),CorpseGroup,WorldGroup|CorpseGroup|ActorGroup);
+        }
+    }
+    if(!d->held) {
+        btVector3 centre(0,0,0);for(auto &p:d->parts)centre+=p.body->getWorldTransform().getOrigin();
+        centre/=btScalar(d->parts.size());d->holdRotation=btQuaternion::getIdentity();d->holdLocal.clear();
+        for(auto &p:d->parts) {btTransform local=p.body->getWorldTransform();local.getOrigin()-=centre;d->holdLocal.push_back(local);}
+    }
+    d->held=true;d->holdTarget=Vec(target);d->holdDeadline=physics->lastTime+0.25;
+    if(d->prop) {
+        d->parts[0].body->setCcdMotionThreshold(0.01f);
+        d->parts[0].body->setCcdSweptSphereRadius(0.025f);
+    }
+    return 1;
+}
+extern "C" int RD_RotateHeld(int entity,float token,const float *axisDegrees) {
+    Doll *d=physics?physics->find(entity):nullptr;
+    if(!d || !d->held || d->token!=token || !axisDegrees)return 0;
+    for(int i=0;i<3;++i)if(!std::isfinite(axisDegrees[i]))return 0;
+    btVector3 axis(axisDegrees[0],axisDegrees[1],axisDegrees[2]);
+    float angle=axis.length();if(angle>180 || angle<0.00001f)return 0;
+    d->holdRotation=btQuaternion(axis/angle,angle*SIMD_PI/180)*d->holdRotation;d->holdRotation.normalize();
+    return 1;
+}
+extern "C" int RD_ThrowProp(int entity,float token,const float *velocity) {
+    Doll *d=physics?physics->find(entity):nullptr;
+    if(!d || d->parts.empty() || d->token!=token || !velocity)return 0;
+    for(int i=0;i<3;++i)if(!std::isfinite(velocity[i]))return 0;
+    d->held=false;Wake(*d);d->age=d->stable=d->activeTime=0;
+    if(d->prop)d->parts[0].body->setCcdMotionThreshold(d->grenade?0.01f:0);
+    btVector3 v=Vec(velocity);if(v.length()>16)v*=16/v.length();
+    for(auto &part:d->parts) {
+        if(!v.fuzzyZero())part.body->setRestitution(0.3f);
+        part.body->setLinearVelocity(v);
+        part.body->setAngularVelocity(v.fuzzyZero()?btVector3(0,0,0):btVector3(2,3,1));
+    }
+    return 1;
 }
 static void Buoyancy(Doll &d, float gravity, float dt) {
     (void)dt;
@@ -445,7 +836,7 @@ static void Buoyancy(Doll &d, float gravity, float dt) {
                 b.getWorldTransform().getOrigin().y()/Scale,lo.z()/Scale+0.1f};
             p.water = waterQuery(bottom,&p.waterSurface)!=0;
             p.waterQueryTime = (float)d.age;
-            b.setDamping(p.water?0.55f:0.12f,p.water?0.65f:0.35f);
+            b.setDamping(p.water?0.55f:p.linearDamping,p.water?0.65f:p.angularDamping);
         }
         if (!p.water) continue;
         const float fraction = std::max(0.0f,std::min(1.0f,
@@ -458,6 +849,36 @@ static void Buoyancy(Doll &d, float gravity, float dt) {
 }
 extern "C" int RD_Frozen(int entity) {
     Doll *d=physics?physics->find(entity):nullptr; return d && d->frozen;
+}
+extern "C" int RD_RemoveGroup(int entity, int group) {
+    Doll *d=physics?physics->find(entity):nullptr;
+    if (!d || group<=0) return 0;
+    int removed=0;
+    for(auto &p:d->parts) if(p.group==group) ++removed;
+    if (!removed || removed==(int)d->parts.size()) return 0;
+    rd_matrix pose[RD_MAX_BONES]; RD_Pose(entity,pose,d->count);
+    const bool frozen=d->frozen;
+    Wake(*d);
+    // Constraints must leave the world before either connected body is freed.
+    for(auto it=d->joints.begin();it!=d->joints.end();) {
+        bool cut=false;
+        for(auto &p:d->parts) if(p.group==group &&
+            (&(*it)->getRigidBodyA()==p.body.get() || &(*it)->getRigidBodyB()==p.body.get())) cut=true;
+        if(cut) { physics->world.removeConstraint(it->get()); it=d->joints.erase(it); }
+        else ++it;
+    }
+    for(auto it=d->parts.begin();it!=d->parts.end();) {
+        if(it->group==group) {
+            const int bone=it->bone, parent=d->parent[bone];
+            d->local[bone]=parent<0?Transform(pose[bone]):Transform(pose[parent]).inverse()*Transform(pose[bone]);
+            physics->world.removeRigidBody(it->body.get()); it=d->parts.erase(it);
+        } else ++it;
+    }
+    std::fill(d->part,d->part+d->count,-1);
+    for(size_t i=0;i<d->parts.size();++i) d->part[d->parts[i].bone]=(int)i;
+    d->poseDirty=d->boundsDirty=true;
+    if(frozen) Freeze(*d);
+    return removed;
 }
 extern "C" int RD_ActiveBodies(void) {
     int count=0; if(physics) for(auto &d:physics->dolls) if(!d->frozen) count+=(int)d->parts.size(); return count;

@@ -8,6 +8,13 @@ extern "C" {
 #define RD_MAX_BONES 128
 #define RD_MAX_BODIES 64
 #define RD_MAX_CORPSES 64
+#define RD_MAX_PROPS 128
+#define RD_MAX_GRENADES 16
+/* Account for delta.lst's 1000x float quantization without accepting stale IDs. */
+static int RD_CommandTokenMatches(float clientToken,float serverToken) {
+    const float delta=clientToken-serverToken;
+    return delta>=-0.0011f && delta<=0.0011f;
+}
 typedef float rd_matrix[3][4];
 typedef struct {
     int parent;
@@ -31,6 +38,7 @@ int RD_Restore(int entity, float token, const rd_bone *bones,
 void RD_RestoreLegacy(int entity);
 int RD_Trace(const float *start, const float *end, float limit, rd_hit *hit);
 void RD_Impulse(int entity, const float *point, const float *impulse);
+int RD_RemoveGroup(int entity, int group);
 int RD_Frozen(int entity);
 int RD_ActiveBodies(void);
 void RD_Reset(void);
@@ -39,15 +47,35 @@ void RD_AddTriangle(const float *a, const float *b, const float *c);
 void RD_EndMesh(const rd_matrix transform, int kinematic);
 void RD_MoveMesh(int key, const rd_matrix transform);
 void RD_RemoveMesh(int key);
+void RD_ActorBounds(int entity,const float *mins,const float *maxs);
+void RD_RemoveActor(int entity);
 int RD_Create(int entity, float token, int count, const rd_bone *bones,
     int hitboxCount, const rd_hitbox *hitboxes, const rd_matrix *pose,
     const float *velocity, int hitgroup);
+/* One rigid convex prop in the same world. Points are relative to bone zero. */
+int RD_CreateProp(int entity, float token, int count, const rd_bone *bones,
+    const rd_matrix *pose, int pointCount, const float (*points)[3],
+    const float *velocity, const float *angularDegrees);
+int RD_SelfCollisionPairs(int entity);
+float RD_SelfPenetration(int entity);
+void RD_FitFootHitboxes(int boneCount,const rd_bone *bones,int vertexCount,
+    const float (*vertices)[3],const unsigned char *vertexBones,int boxCount,rd_hitbox *boxes);
 void RD_Remove(int entity);
 int RD_Has(int entity, float token);
 void RD_Step(double time, float gravity);
+int RD_Grenade(int entity,float token);
+int RD_CreateGrenade(int entity,float token,int count,const rd_bone *bones,const rd_matrix *pose,
+    int pointCount,const float (*points)[3],const float *velocity,const float *angularDegrees);
+void RD_Blast(const float *origin,float radius,float strength);
+/* Pause in place when disabled; retain exact poses and corpse-hit colliders. */
+void RD_FreezeAll(double time);
+int RD_HoldProp(int entity,float token,const float *target);
+int RD_RotateHeld(int entity,float token,const float *axisDegrees);
+int RD_ThrowProp(int entity,float token,const float *velocity);
 int RD_Pose(int entity, rd_matrix *pose, int count);
 int RD_Bounds(int entity, float *mins, float *maxs);
 int RD_Count(void);
+int RD_CorpseCount(void);
 int RD_BodyCount(int entity);
 float RD_JointError(int entity);
 #ifdef __cplusplus

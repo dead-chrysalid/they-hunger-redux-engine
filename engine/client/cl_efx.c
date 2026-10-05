@@ -1277,6 +1277,12 @@ void GAME_EXPORT R_BloodStream( const vec3_t org, const vec3_t dir, int pcolor, 
 	int		i, j;
 	float		arc;
 	int		accel = speed; // must be integer due to bug in GoldSrc
+    short redShades[3];
+    // The game uses 247 as its red-blood code. Adding palette offsets can
+    // overflow into grey/white entries; select actual red RGB shades instead.
+    redShades[0]=R_LookupColor(155,5,10);
+    redShades[1]=R_LookupColor(190,7,12);
+    redShades[2]=R_LookupColor(225,12,18);
 
 	for( arc = 0.05f, i = 0; i < 100; i++ )
 	{
@@ -1285,7 +1291,7 @@ void GAME_EXPORT R_BloodStream( const vec3_t org, const vec3_t dir, int pcolor, 
 
 		p->die = cl.time + 2.0f;
 		p->type = pt_vox_grav;
-		p->color = pcolor + COM_RandomLong( 0, 9 );
+		p->color = pcolor==247?redShades[COM_RandomLong(0,2)]:pcolor+COM_RandomLong(0,9);
 
 		VectorCopy( org, p->org );
 		VectorCopy( dir, p->vel );
@@ -1304,7 +1310,7 @@ void GAME_EXPORT R_BloodStream( const vec3_t org, const vec3_t dir, int pcolor, 
 		if( !p ) return;
 
 		p->die = cl.time + 3.0f;
-		p->color = pcolor + COM_RandomLong( 0, 9 );
+		p->color = pcolor==247?redShades[COM_RandomLong(0,2)]:pcolor+COM_RandomLong(0,9);
 		p->type = pt_vox_slowgrav;
 
 		VectorCopy( org, p->org );
@@ -1326,7 +1332,7 @@ void GAME_EXPORT R_BloodStream( const vec3_t org, const vec3_t dir, int pcolor, 
 			if( !p ) return;
 
 			p->die = cl.time + 3.0f;
-			p->color = pcolor + COM_RandomLong( 0, 9 );
+			p->color = pcolor==247?redShades[COM_RandomLong(0,2)]:pcolor+COM_RandomLong(0,9);
 			p->type = pt_vox_slowgrav;
 
 			p->org[0] = org[0] + COM_RandomFloat( -1.0f, 1.0f );

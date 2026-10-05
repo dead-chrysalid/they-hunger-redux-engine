@@ -2224,7 +2224,7 @@ static void GAME_EXPORT pfnTraceLine( const float *v1, const float *v2, int fNoM
         rd_hit hit;
         if (ref.ragdollTrace(v1,v2,trace.fraction,&hit)) {
             edict_t *corpse = SV_EdictNum(hit.entity);
-            if (SV_IsValidEdict(corpse) && corpse->v.deadflag != DEAD_NO && corpse->v.solid == SOLID_NOT) {
+            if (SV_IsValidEdict(corpse) && (corpse->v.deadflag != DEAD_NO || corpse->v.iuser4==19782) && corpse->v.solid == SOLID_NOT) {
                 trace.fraction = hit.fraction; trace.ent = corpse;
                 VectorCopy(hit.point,trace.endpos); VectorCopy(hit.normal,trace.plane.normal);
                 trace.plane.dist = DotProduct(hit.point,hit.normal); trace.hitgroup = hit.group;
@@ -3548,6 +3548,10 @@ static void GAME_EXPORT pfnGetBonePosition( const edict_t* pEdict, int iBone, fl
 {
 	if( !SV_IsValidEdict( pEdict ))
 		return;
+#if !XASH_DEDICATED
+    if(svs.maxclients==1 && (pEdict->v.deadflag!=DEAD_NO || pEdict->v.iuser4==19782) && ref.initialized && ref.ragdollBone &&
+        ref.ragdollBone(NUM_FOR_EDICT(pEdict),iBone,rgflOrigin,rgflAngles)) return;
+#endif
 	Mod_GetBonePosition( pEdict, iBone, rgflOrigin, rgflAngles );
 }
 

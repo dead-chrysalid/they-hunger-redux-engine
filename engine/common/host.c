@@ -1242,6 +1242,8 @@ int EXPORT Host_Main( int argc, char **argv, const char *progname, int bChangeGa
 	Cvar_Get( "hud_fastswitch", "0", FCVAR_ARCHIVE, "switch weapons without confirmation" );
 	Cvar_Get( "sv_physical_bullets", "0", FCVAR_ARCHIVE, "experimental physical bullet simulation" );
 	Cvar_Get( "sv_ragdolls", "1", FCVAR_ARCHIVE, "enable physics for new enemy deaths" );
+	Cvar_Get( "cl_ragdolls", "1", FCVAR_ARCHIVE, "Enable client ragdoll physics" );
+	Cvar_Get( "sv_dismemberment", "1", FCVAR_ARCHIVE, "Enable limb cuts and skeleton breakup" );
 	Cvar_Get( "sv_hitscan_impact_delay", "1", FCVAR_ARCHIVE, "enable delayed hitscan impacts" );
 	Cvar_Get( "sv_hitscan_impact_delay_min", "0.02", FCVAR_ARCHIVE, "minimum hitscan impact delay in seconds" );
 	Cvar_Get( "sv_hitscan_impact_delay_max", "0.06", FCVAR_ARCHIVE, "maximum hitscan impact delay in seconds" );
