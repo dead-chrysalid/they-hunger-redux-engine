@@ -1,20 +1,25 @@
-# Xash3D: Ray Traced
-[![GitHub Actions Status](https://github.com/FWGS/xash3d-fwgs/actions/workflows/c-cpp.yml/badge.svg)](https://github.com/FWGS/xash3d-fwgs/actions/workflows/c-cpp.yml) 
+<div align="center">
 
-Xash3D: Ray Traced is a fork of the [Xash3D FWGS](https://github.com/FWGS/xash3d-fwgs) engine with the added [custom path-traced renderer](https://github.com/sultim-t/RayTracedGL1).
+# They Hunger Redux · Engine
 
-## Install
-Latest compiled build for Half-Life 1 can be found at https://github.com/sultim-t/xash-rt/releases
+**The Xash RT engine and ref_gl integration used by They Hunger Redux.**
+
+[Project home](https://github.com/dead-chrysalid/they-hunger-redux) · [Build guide](https://github.com/dead-chrysalid/they-hunger-redux/blob/master/docs/BUILDING.md) · [Report an issue](https://github.com/dead-chrysalid/they-hunger-redux/issues)
+
+</div>
+
+## About
+
+This is the They Hunger Redux development of [sultim-t/xash-rt](https://github.com/sultim-t/xash-rt). Its upstream and mod development history retain the original contributors' attribution. 
 
 ## Build
-### Windows (Visual Studio)
-1) Clone this git repository
-1) Setup dependencies
-	- [RayTracedGL1](https://github.com/sultim-t/RayTracedGL1/releases/download/hl1-dev) (`RTGL1_SDK_PATH` environment variable should point to it)
-	- [SDL2 2.0.14](http://libsdl.org/release/SDL2-devel-2.0.14-VC.zip) (should be put into the `SDL2_VC` folder)
-	- [Half-Life 1 SDK for Xash](https://github.com/sultim-t/hlsdk-xash3d/releases)
-	- for more info, look Github Actions scripts ([c-cpp.yml](https://github.com/sultim-t/xash-rt/blob/ref_rt/.github/workflows/c-cpp.yml), [deps_win32.sh](https://github.com/sultim-t/xash-rt/blob/ref_rt/scripts/gha/deps_win32.sh))
-1) For a verified command-line build path, see [Documentation/windows-build-verified.md](Documentation/windows-build-verified.md)
-1) Important: the currently verified MSBuild path uses `/m:1` instead of the default parallel project build
-1) Open Visual Studio solution `xash3d-fwgs.sln` or use the documented MSBuild command
-1) Build solution
+
+Use the main project's `sources.json` and Windows source-only build workflow to obtain the matching engine, SDK, renderer, and menu revisions. Client API **10** and renderer API **4** are the coordinated interfaces.
+
+The mod's resource collection and playable downloads are distributed separately through ModDB. The main project will add its ModDB link when the page is published.
+
+## License and credits
+
+Engine source files carry GPL-3.0-or-later notices. The GPL text is in LICENSE; bundled dependencies retain their own terms.
+
+See [Third-party notices](THIRD_PARTY_NOTICES.md), the original source-file notices, and the main project's [credits](https://github.com/dead-chrysalid/they-hunger-redux/blob/master/CREDITS.md).

@@ -1,6 +1,6 @@
 [submodule "mainui"]
 	path = 3rdparty/mainui
-	url = https://github.com/sultim-t/xash-rt-menu
+	url = https://github.com/dead-chrysalid/they-hunger-redux-menu.git
 	ignore = untracked
 [submodule "ref_gl/nanogl"]
 	path = 3rdparty/nanogl
